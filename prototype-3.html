@@ -1,0 +1,663 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Portfolio Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <script type="module">
+        // --- 0. App Constants & Config ---
+        const STORAGE_KEY = 'portfolioAppUserData'; // Key for localStorage
+
+        // --- 1. Global App State ---
+        let currentUser = null; // To store the currently logged-in username
+        let simulationInterval = null; // To store the simulation interval ID
+
+        // --- 2. DOM Element References ---
+        let loginView, appView, portfolioBody, totalValueEl, totalGainLossEl, totalInvestedEl, todayGainLossEl, loadingEl, addAssetBtn, addAssetModal, addAssetModalBackdrop, closeModalBtn, saveAssetBtn, assetForm, profileDropdown, profileDropdownMenu, signOutBtn, loginForm, signupForm, authErrorEl, profileEmailEl;
+
+        // --- 3. Style Definitions ---
+        const styles = `
+            body { font-family: 'Inter', sans-serif; }
+            .modal-backdrop {
+                transition: opacity 0.25s ease;
+                z-index: 50;
+            }
+            .modal-content {
+                transition: all 0.25s ease;
+                max-height: 90vh;
+            }
+            /* Spinner Styles */
+            .spinner {
+                border-top-color: #3498db;
+                animation: spin 1s linear infinite;
+            }
+            @keyframes spin { to { transform: rotate(360deg); } }
+            /* Hide scrollbar for modal content */
+            .modal-content-body::-webkit-scrollbar { display: none; }
+            .modal-content-body { -ms-overflow-style: none; scrollbar-width: none; }
+        `;
+        const styleSheet = document.createElement("style");
+        styleSheet.type = "text/css";
+        styleSheet.innerText = styles;
+        document.head.appendChild(styleSheet);
+
+
+        // --- 4. Initialization ---
+        document.addEventListener('DOMContentLoaded', () => {
+            // Get all DOM elements
+            loginView = document.getElementById('login-view');
+            appView = document.getElementById('app-view');
+            portfolioBody = document.getElementById('portfolio-body');
+            totalValueEl = document.getElementById('total-value');
+            totalGainLossEl = document.getElementById('total-gain-loss');
+            totalInvestedEl = document.getElementById('total-invested');
+            todayGainLossEl = document.getElementById('today-gain-loss');
+            loadingEl = document.getElementById('loading');
+            addAssetBtn = document.getElementById('add-asset-btn');
+            addAssetModal = document.getElementById('add-asset-modal');
+            addAssetModalBackdrop = document.getElementById('add-asset-modal-backdrop');
+            closeModalBtn = document.getElementById('close-modal-btn');
+            saveAssetBtn = document.getElementById('save-asset-btn');
+            assetForm = document.getElementById('asset-form');
+            profileDropdown = document.getElementById('profile-dropdown');
+            profileDropdownMenu = document.getElementById('profile-dropdown-menu');
+            signOutBtn = document.getElementById('sign-out-btn');
+            loginForm = document.getElementById('login-form');
+            signupForm = document.getElementById('signup-form');
+            authErrorEl = document.getElementById('auth-error');
+            profileEmailEl = document.getElementById('profile-email');
+
+            // --- App Event Listeners ---
+            setupEventListeners();
+            
+            // Check if a user is already logged in (using sessionStorage)
+            checkSession();
+        });
+
+        /**
+         * Checks sessionStorage to see if a user session is active.
+         */
+        function checkSession() {
+            const loggedInUser = sessionStorage.getItem('loggedInUser');
+            if (loggedInUser) {
+                currentUser = loggedInUser;
+                initializeAppView();
+            } else {
+                showLoginView();
+            }
+        }
+        
+        /**
+         * Sets up all event listeners for the application.
+         */
+        function setupEventListeners() {
+            // Auth forms
+            loginForm.addEventListener('submit', handleLogin);
+            signupForm.addEventListener('submit', handleSignup);
+
+            // Profile Dropdown
+            profileDropdown.addEventListener('click', () => {
+                profileDropdownMenu.classList.toggle('hidden');
+            });
+            signOutBtn.addEventListener('click', handleSignOut);
+
+            // Add Asset Modal
+            addAssetBtn.addEventListener('click', showAddAssetModal);
+            closeModalBtn.addEventListener('click', hideAddAssetModal);
+            addAssetModalBackdrop.addEventListener('click', (e) => {
+                if (e.target === addAssetModalBackdrop) {
+                    hideAddAssetModal();
+                }
+            });
+            assetForm.addEventListener('submit', handleSaveAsset);
+
+            // Close dropdown if clicking outside
+            window.addEventListener('click', (e) => {
+                if (!profileDropdown.contains(e.target)) {
+                    profileDropdownMenu.classList.add('hidden');
+                }
+            });
+        }
+        
+        /**
+         * Transitions the UI to show the main application view.
+         */
+        function initializeAppView() {
+            profileEmailEl.textContent = currentUser;
+            appView.classList.remove('hidden');
+            loginView.classList.add('hidden');
+            loadPortfolio();
+            startPriceSimulation();
+        }
+        
+        /**
+         * Transitions the UI to show the login screen.
+         */
+        function showLoginView() {
+            loginView.classList.remove('hidden');
+            appView.classList.add('hidden');
+
+            if (simulationInterval) {
+                clearInterval(simulationInterval);
+                simulationInterval = null;
+            }
+            clearPortfolioUI();
+        }
+
+        // --- 5. Authentication Functions ---
+
+        /**
+         * Handles user login with username and password from localStorage.
+         */
+        function handleLogin(e) {
+            e.preventDefault();
+            authErrorEl.classList.add('hidden');
+            const username = loginForm.username.value;
+            const password = loginForm.password.value;
+            
+            const storedDataRaw = localStorage.getItem(STORAGE_KEY);
+            if (!storedDataRaw) {
+                authErrorEl.textContent = "No account found. Please sign up.";
+                authErrorEl.classList.remove('hidden');
+                return;
+            }
+
+            const storedData = JSON.parse(storedDataRaw);
+
+            if (storedData.username === username && storedData.password === password) {
+                // Success
+                currentUser = username;
+                sessionStorage.setItem('loggedInUser', username); // Keep user logged in for the session
+                initializeAppView();
+            } else {
+                // Failure
+                authErrorEl.textContent = "Invalid username or password.";
+                authErrorEl.classList.remove('hidden');
+            }
+        }
+
+        /**
+         * Handles new user sign-up. This will overwrite any existing user data.
+         */
+        function handleSignup(e) {
+            e.preventDefault();
+            authErrorEl.classList.add('hidden');
+            const username = signupForm.username.value;
+            const password = signupForm.password.value;
+
+            if (!username || password.length < 6) {
+                 authErrorEl.textContent = "Username is required and password must be at least 6 characters.";
+                 authErrorEl.classList.remove('hidden');
+                 return;
+            }
+
+            const newUserData = {
+                username: username,
+                password: password,
+                portfolio: []
+            };
+
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(newUserData));
+            
+            // Clear form and show success message
+            signupForm.reset();
+            alert("Account created successfully! You can now log in.");
+        }
+
+        /**
+         * Handles user sign-out.
+         */
+        function handleSignOut() {
+            sessionStorage.removeItem('loggedInUser');
+            currentUser = null;
+            showLoginView();
+        }
+
+        // --- 6. Portfolio Logic (using localStorage) ---
+
+        /**
+         * Loads portfolio data from localStorage and triggers a render.
+         */
+        function loadPortfolio() {
+            loadingEl.style.display = 'block';
+            const storedDataRaw = localStorage.getItem(STORAGE_KEY);
+            if (storedDataRaw) {
+                const portfolio = JSON.parse(storedDataRaw).portfolio || [];
+                renderPortfolio(portfolio);
+            } else {
+                 renderPortfolio([]); // Render empty state
+            }
+        }
+
+        /**
+         * Renders the portfolio table and summary cards from data.
+         * @param {Array} portfolio - Array of portfolio asset objects.
+         */
+        function renderPortfolio(portfolio) {
+            if (loadingEl) {
+                loadingEl.style.display = 'none';
+            }
+            
+            portfolioBody.innerHTML = ''; // Clear existing table rows
+            let totalPortfolioValue = 0;
+            let totalInvestedValue = 0;
+
+            if (portfolio.length === 0) {
+                 portfolioBody.innerHTML = `
+                    <tr>
+                        <td colspan="6" class="px-6 py-12 text-center text-gray-500">
+                            Your portfolio is empty.
+                            <br>
+                            Click the "+" button to add your first investment.
+                        </td>
+                    </tr>
+                 `;
+            }
+
+            portfolio.forEach(asset => {
+                // Calculate values for this asset
+                const investedValue = (asset.quantity || 0) * (asset.avgPrice || 0);
+                const currentValue = (asset.quantity || 0) * (asset.currentPrice || 0);
+                const totalGainLoss = currentValue - investedValue;
+                const totalGainLossPercent = investedValue === 0 ? 0 : (totalGainLoss / investedValue) * 100;
+
+                totalPortfolioValue += currentValue;
+                totalInvestedValue += investedValue;
+
+                const gainLossClass = getColorClass(totalGainLoss);
+
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-gray-700 transition-colors duration-150';
+
+                row.innerHTML = `
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <div class="text-sm font-medium text-white">${asset.name}</div>
+                    </td>
+
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                            asset.type === 'Stock' ? 'bg-blue-900 text-blue-200' : 
+                            asset.type === 'Mutual Fund' ? 'bg-purple-900 text-purple-200' :
+                            'bg-yellow-900 text-yellow-200'
+                        }">
+                            ${asset.type}
+                        </span>
+                    </td>
+
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-300">
+                        ${formatCurrency(investedValue)}
+                    </td>
+
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold text-white">
+                        ${formatCurrency(currentValue)}
+                    </td>
+
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold ${gainLossClass}">
+                        <div>${formatCurrency(totalGainLoss)}</div>
+                        <div class="text-xs">(${totalGainLossPercent.toFixed(2)}%)</div>
+                    </td>
+
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-300">
+                        ${(asset.quantity || 0).toLocaleString()}
+                    </td>
+                `;
+                portfolioBody.appendChild(row);
+            });
+
+            // --- Update Summary Cards ---
+            const overallGainLoss = totalPortfolioValue - totalInvestedValue;
+            const overallGainLossPercent = totalInvestedValue === 0 ? 0 : (overallGainLoss / totalInvestedValue) * 100;
+            const overallGainLossClass = getColorClass(overallGainLoss);
+
+            totalInvestedEl.textContent = formatCurrency(totalInvestedValue);
+            totalValueEl.textContent = formatCurrency(totalPortfolioValue);
+            
+            totalGainLossEl.textContent = `${formatCurrency(overallGainLoss)} (${overallGainLossPercent.toFixed(2)}%)`;
+            totalGainLossEl.className = `text-lg font-medium ${overallGainLossClass}`;
+            
+            // Simulating "Today's" gain as a fraction of the total gain
+            const todayGain = overallGainLoss * 0.1; // Simple simulation
+            todayGainLossEl.textContent = formatCurrency(todayGain);
+            todayGainLossEl.className = `text-4xl font-bold ${getColorClass(todayGain)}`;
+        }
+
+        /**
+         * Clears the portfolio UI when logging out.
+         */
+        function clearPortfolioUI() {
+            portfolioBody.innerHTML = '';
+            totalInvestedEl.textContent = formatCurrency(0);
+            totalValueEl.textContent = formatCurrency(0);
+            totalGainLossEl.textContent = `${formatCurrency(0)} (0.00%)`;
+            totalGainLossEl.className = 'text-lg font-medium text-gray-500';
+            todayGainLossEl.textContent = formatCurrency(0);
+            todayGainLossEl.className = 'text-4xl font-bold text-gray-500';
+            loadingEl.style.display = 'block';
+            loadingEl.textContent = 'Please log in to view your portfolio.';
+        }
+
+        /**
+         * Simulates real-time price fluctuations by updating localStorage.
+         */
+        function startPriceSimulation() {
+            if (simulationInterval) {
+                clearInterval(simulationInterval);
+            }
+            if (!currentUser) return;
+
+            simulationInterval = setInterval(() => {
+                if (!currentUser) { // Ensure user is still logged in
+                    clearInterval(simulationInterval);
+                    return;
+                }
+
+                const storedDataRaw = localStorage.getItem(STORAGE_KEY);
+                if (!storedDataRaw) return;
+
+                let storedData = JSON.parse(storedDataRaw);
+                let portfolio = storedData.portfolio || [];
+
+                portfolio.forEach(asset => {
+                    // Create a small random fluctuation
+                    const volatility = asset.type === 'Crypto' ? 0.02 : 0.005; // 2% vs 0.5%
+                    const randomFactor = (Math.random() - 0.5) * volatility;
+                    let newPrice = asset.currentPrice * (1 + randomFactor);
+                    asset.currentPrice = Math.max(0, newPrice); // Ensure price doesn't go negative
+                });
+
+                // Update the entire user object in localStorage
+                storedData.portfolio = portfolio;
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(storedData));
+
+                // Re-render the portfolio to show the new prices
+                renderPortfolio(portfolio);
+
+            }, 3000); // Run every 3 seconds
+        }
+
+        // --- 7. Modal Functions ---
+
+        /**
+         * Shows the "Add Asset" modal.
+         */
+        function showAddAssetModal() {
+            addAssetModalBackdrop.classList.remove('invisible', 'opacity-0');
+            addAssetModal.classList.remove('-translate-y-10', 'scale-95');
+            addAssetModal.classList.add('translate-y-0', 'scale-100');
+        }
+
+        /**
+         * Hides the "Add Asset" modal and resets the form.
+         */
+        function hideAddAssetModal() {
+            addAssetModal.classList.add('-translate-y-10', 'scale-95');
+            addAssetModal.classList.remove('translate-y-0', 'scale-100');
+            addAssetModalBackdrop.classList.add('opacity-0');
+            setTimeout(() => {
+                addAssetModalBackdrop.classList.add('invisible');
+                assetForm.reset(); // Clear the form
+            }, 250); // Wait for transition
+        }
+
+        /**
+         * Handles saving a new asset to localStorage.
+         */
+        function handleSaveAsset(e) {
+            e.preventDefault();
+            if (!currentUser) {
+                console.error("No user logged in. Cannot save asset.");
+                return;
+            }
+
+            // Get form data
+            const formData = new FormData(assetForm);
+            const assetName = formData.get('asset-name');
+            const assetType = formData.get('asset-type');
+            const quantity = parseFloat(formData.get('quantity'));
+            const avgPrice = parseFloat(formData.get('avg-price'));
+
+            // Basic validation
+            if (!assetName || !assetType || isNaN(quantity) || isNaN(avgPrice)) {
+                alert("Please fill out all fields with valid numbers.");
+                return;
+            }
+
+            // Create new asset object
+            const newAsset = {
+                id: Date.now().toString(), // Simple unique ID
+                name: assetName,
+                type: assetType,
+                quantity: quantity,
+                avgPrice: avgPrice,
+                currentPrice: avgPrice // Set current price to avg price initially
+            };
+
+            // Save to localStorage
+            const storedDataRaw = localStorage.getItem(STORAGE_KEY);
+            if(storedDataRaw){
+                let storedData = JSON.parse(storedDataRaw);
+                storedData.portfolio.push(newAsset);
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(storedData));
+                
+                // Refresh the view
+                renderPortfolio(storedData.portfolio);
+                hideAddAssetModal();
+            } else {
+                 alert("Could not find user data. Please log in again.");
+            }
+        }
+
+
+        // --- 8. Helper Functions ---
+
+        /**
+         * Formats a number as Indian Rupee currency.
+         * @param {number} value - The number to format.
+         * @returns {string} - Formatted currency string.
+         */
+        function formatCurrency(value) {
+            if (typeof value !== 'number') {
+                value = 0;
+            }
+            return new Intl.NumberFormat('en-IN', {
+                style: 'currency',
+                currency: 'INR',
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+            }).format(value);
+        }
+
+        /**
+         * Returns a green or red Tailwind class based on the value.
+         * @param {number} value - The number (positive or negative).
+         * @returns {string} - Tailwind CSS class.
+         */
+        function getColorClass(value) {
+            if (value > 0) return 'text-green-500';
+            if (value < 0) return 'text-red-500';
+            return 'text-gray-400';
+        }
+
+    </script>
+</head>
+<body class="bg-gray-900 text-gray-200 antialiased">
+
+    <div id="login-view" class="min-h-screen flex items-center justify-center p-4">
+        <div class="max-w-md w-full">
+            
+            <div class="text-center mb-8">
+                <h1 class="text-4xl font-bold text-white mb-2">My Portfolio Manager</h1>
+                <p class="text-lg text-gray-400">Sign in to access your portfolio.</p>
+            </div>
+
+            <div id="auth-error" class="bg-red-800 border border-red-700 text-red-100 px-4 py-3 rounded-lg mb-6 hidden" role="alert">
+                <span class="block sm:inline"></span>
+            </div>
+
+            <form id="login-form" class="bg-gray-800 p-8 rounded-lg shadow-2xl mb-6">
+                <h2 class="text-2xl font-semibold text-white mb-6 text-center">Login</h2>
+                <div class="mb-4">
+                    <label for="login-username" class="block text-sm font-medium text-gray-400 mb-2">Username</label>
+                    <input type="text" id="login-username" name="username" required class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="your_username">
+                </div>
+                <div class="mb-6">
+                    <label for="login-password" class="block text-sm font-medium text-gray-400 mb-2">Password</label>
+                    <input type="password" id="login-password" name="password" required class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="••••••••">
+                </div>
+                <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-5 rounded-lg shadow-md transition-all duration-200 ease-in-out">
+                    Sign In
+                </button>
+            </form>
+
+            <form id="signup-form" class="bg-gray-800 p-8 rounded-lg shadow-2xl">
+                <h2 class="text-2xl font-semibold text-white mb-6 text-center">Create Account</h2>
+                 <div class="mb-4">
+                    <label for="signup-username" class="block text-sm font-medium text-gray-400 mb-2">Username</label>
+                    <input type="text" id="signup-username" name="username" required class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="create_a_username">
+                </div>
+                <div class="mb-6">
+                    <label for="signup-password" class="block text-sm font-medium text-gray-400 mb-2">Password (min 6 characters)</label>
+                    <input type="password" id="signup-password" name="password" required minlength="6" class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Create a password">
+                </div>
+                <button type="submit" class="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-5 rounded-lg shadow-md transition-all duration-200 ease-in-out">
+                    Sign Up
+                </button>
+            </form>
+
+        </div>
+    </div>
+
+
+    <div id="app-view" class="container mx-auto max-w-7xl p-4 md:p-8 hidden">
+        
+        <header class="mb-8 flex justify-between items-center">
+            <div>
+                <h1 class="text-3xl font-bold text-white">My Portfolio Manager</h1>
+            </div>
+            
+            <div class="relative">
+                <button id="profile-dropdown" class="flex items-center justify-center w-12 h-12 bg-gray-700 text-gray-300 rounded-full hover:bg-gray-600 transition-colors focus:outline-none">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                </button>
+                
+                <div id="profile-dropdown-menu" class="absolute right-0 mt-2 w-56 bg-gray-800 rounded-lg shadow-2xl border border-gray-700 z-20 hidden">
+                    <div class="p-4 border-b border-gray-700">
+                        <p class="text-sm text-gray-400">Signed in as</p>
+                        <p id="profile-email" class="text-sm font-medium text-white truncate">username</p>
+                    </div>
+                    <div class="py-2">
+                        <a href="#" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 transition-colors">Profile</a>
+                        <a href="#" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 transition-colors">Settings</a>
+                    </div>
+                    <div class="py-2 border-t border-gray-700">
+                         <button id="sign-out-btn" class="w-full text-left block px-4 py-2 text-sm text-red-400 hover:bg-red-800 hover:text-red-200 transition-colors">
+                            Sign Out
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-sm font-medium text-gray-400 mb-2">Total Portfolio Value</h2>
+                <div id="total-value" class="text-4xl font-bold text-white mb-2">₹0.00</div>
+                <div id="total-gain-loss" class="text-lg font-medium text-gray-500">₹0.00 (0.00%)</div>
+            </div>
+
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-sm font-medium text-gray-400 mb-2">Total Invested</h2>
+                <div id="total-invested" class="text-4xl font-bold text-white">₹0.00</div>
+                <p class="text-gray-500 text-sm">Your initial capital</p>
+            </div>
+
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-sm font-medium text-gray-400 mb-2">Today's Gain/Loss</h2>
+                <div id="today-gain-loss" class="text-4xl font-bold text-gray-500">₹0.00</div>
+                <p class="text-gray-500 text-sm">Based on market simulation</p>
+            </div>
+
+        </div>
+
+        <div class="bg-gray-800 rounded-lg shadow-lg overflow-hidden">
+            <div class="p-6 border-b border-gray-700">
+                <h2 class="text-xl font-semibold text-white">Your Holdings</h2>
+            </div>
+            
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-700">
+                    <thead class="bg-gray-800">
+                        <tr>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Asset</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Type</th>
+                            <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Invested Value</th>
+                            <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Current Value</th>
+                            <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Total Gain/Loss</th>
+                            <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Quantity</th>
+                        </tr>
+                    </thead>
+                    <tbody id="portfolio-body" class="bg-gray-800 divide-y divide-gray-700">
+                        </tbody>
+                </table>
+            </div>
+            <div id="loading" class="p-6 text-center text-gray-500">
+                Loading portfolio data...
+            </div>
+        </div>
+
+    </div>
+
+    <div id="add-asset-modal-backdrop" class="modal-backdrop fixed inset-0 flex items-center justify-center bg-black bg-opacity-75 invisible opacity-0">
+        <div id="add-asset-modal" class="modal-content bg-gray-800 text-gray-200 rounded-lg shadow-2xl w-11/12 md:max-w-md transform -translate-y-10 scale-95 flex flex-col">
+            <div class="flex items-center justify-between p-5 border-b border-gray-700 flex-shrink-0">
+                <h3 class="text-xl font-semibold text-white">Add New Investment</h3>
+                <button id="close-modal-btn" class="text-gray-400 hover:text-white transition-colors">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            
+            <form id="asset-form" class="modal-content-body p-6 space-y-4 overflow-y-auto">
+                <div>
+                    <label for="asset-name" class="block text-sm font-medium text-gray-400 mb-2">Asset Name</label>
+                    <input type="text" id="asset-name" name="asset-name" required class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g., Reliance Industries">
+                </div>
+                
+                <div>
+                    <label for="asset-type" class="block text-sm font-medium text-gray-400 mb-2">Asset Type</label>
+                    <select id="asset-type" name="asset-type" required class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="Stock">Stock</option>
+                        <option value="Mutual Fund">Mutual Fund</option>
+                        <option value="Crypto">Crypto</option>
+                    </select>
+                </div>
+                
+                <div>
+                    <label for="quantity" class="block text-sm font-medium text-gray-400 mb-2">Quantity</label>
+                    <input type="number" step="any" id="quantity" name="quantity" required class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g., 10">
+                </div>
+                
+                <div>
+                    <label for="avg-price" class="block text-sm font-medium text-gray-400 mb-2">Average Purchase Price (per unit)</label>
+                    <input type="number" step="any" id="avg-price" name="avg-price" required class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g., 2900.50">
+                </div>
+
+                <div class="pt-4">
+                     <button id="save-asset-btn" type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-5 rounded-lg shadow-md transition-all duration-200 ease-in-out">
+                        Save Asset
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+
+    <button id="add-asset-btn" class="fixed bottom-8 right-8 bg-indigo-600 hover:bg-indigo-700 text-white w-16 h-16 rounded-full shadow-2xl flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-gray-900 z-30">
+        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+    </button>
+    
+</body>
+</html>

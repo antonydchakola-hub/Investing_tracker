@@ -1,0 +1,746 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Portfolio Manager</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>
+    <!-- Load Inter font -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Modal Styles */
+        .modal {
+            transition: opacity 0.25s ease;
+        }
+        .modal-content {
+            transition: transform 0.25s ease;
+            max-height: 80vh;
+        }
+        
+        /* Spinner Styles */
+        .spinner {
+            border-top-color: #3498db; /* A bright color for visibility */
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-200 antialiased">
+
+    <div class="container mx-auto max-w-7xl p-4 md:p-8">
+        
+        <!-- Header -->
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-white">My Portfolio Manager</h1>
+            <p class="text-lg text-gray-400">Welcome back, here's your financial overview.</p>
+        </header>
+
+        <!-- AI Summary Button -->
+        <div class="mb-6">
+            <button id="generate-summary-btn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-5 rounded-lg shadow-md transition-all duration-200 ease-in-out flex items-center justify-center">
+                <span class="mr-2">✨</span> Generate Portfolio Summary
+            </button>
+        </div>
+
+        <!-- Summary Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            
+            <!-- Total Portfolio Value -->
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-sm font-medium text-gray-400 mb-2">Total Portfolio Value</h2>
+                <div id="total-value" class="text-4xl font-bold text-white mb-2">₹0.00</div>
+                <div id="total-gain-loss" class="text-lg font-medium text-gray-500">₹0.00 (0.00%)</div>
+            </div>
+
+            <!-- Total Invested -->
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-sm font-medium text-gray-400 mb-2">Total Invested</h2>
+                <div id="total-invested" class="text-4xl font-bold text-white">₹0.00</div>
+                <p class="text-gray-500 text-sm">Your initial capital</p>
+            </div>
+
+            <!-- Placeholder for other metric -->
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-sm font-medium text-gray-400 mb-2">Today's Gain/Loss</h2>
+                <div id="today-gain-loss" class="text-4xl font-bold text-gray-500">₹0.00</div>
+                <p class="text-gray-500 text-sm">Based on market open</p>
+            </div>
+
+        </div>
+
+        <!-- Portfolio Holdings Table -->
+        <div class="bg-gray-800 rounded-lg shadow-lg overflow-hidden">
+            <div class="p-6 border-b border-gray-700">
+                <h2 class="text-xl font-semibold text-white">Your Holdings</h2>
+            </div>
+            
+            <!-- Table Container -->
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-700">
+                    <thead class="bg-gray-800">
+                        <tr>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Asset</th>
+                            <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Type</th>
+                            <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Invested Value</th>
+                            <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Current Value</th>
+                            <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Total Gain/Loss</th>
+                            <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Quantity</th>
+                            <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Analysis</th>
+                        </tr>
+                    </thead>
+                    <tbody id="portfolio-body" class="bg-gray-800 divide-y divide-gray-700">
+                        <!-- Rows will be dynamically injected here by JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+            <div id="loading" class="p-6 text-center text-gray-500">
+                Loading portfolio data...
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Gemini AI Modal -->
+    <div id="ai-modal" class="modal fixed inset-0 z-50 overflow-hidden flex items-center justify-center bg-black bg-opacity-75 invisible opacity-0">
+        <div class="modal-content bg-gray-800 text-gray-200 rounded-lg shadow-2xl w-11/12 md:max-w-4xl transform -translate-y-10 scale-95 p-6">
+            <!-- Modal Header -->
+            <div class="flex items-center justify-between pb-3 border-b border-gray-700">
+                <h3 id="modal-title" class="text-xl font-semibold text-white">AI Analysis</h3>
+                <button id="modal-close-btn" class="text-gray-400 hover:text-white transition-colors">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            
+            <!-- Modal Body -->
+            <div class="mt-4">
+                <!-- Spinner -->
+                <div id="modal-spinner" class="flex justify-center items-center h-32">
+                    <div class="spinner w-12 h-12 rounded-full border-4 border-gray-600"></div>
+                </div>
+                <!-- Content -->
+                <div id="modal-body-content" class="prose prose-invert max-w-none text-gray-300 overflow-y-auto" style="max-height: 60vh;">
+                    <!-- AI content or Chart.js canvas will be injected here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+
+            // --- 1. Mock Data ---
+            // Based on your info, starting with ₹6 Lakh in a mutual fund.
+            let portfolio = [
+                {
+                    id: 1,
+                    name: 'Nifty 50 Index Fund',
+                    type: 'Mutual Fund',
+                    quantity: 600, // 600 units
+                    avgPrice: 1000, // at ₹1000/unit
+                    currentPrice: 1000, // This will be simulated
+                    priceHistory: []
+                },
+                {
+                    id: 2,
+                    name: 'Reliance Industries (RELI)',
+                    type: 'Stock',
+                    quantity: 50,
+                    avgPrice: 2900,
+                    currentPrice: 2900,
+                    priceHistory: []
+                },
+                {
+                    id: 3,
+                    name: 'HDFC Bank (HDFCBANK)',
+                    type: 'Stock',
+                    quantity: 100,
+                    avgPrice: 1500,
+                    currentPrice: 1500,
+                    priceHistory: []
+                },
+                {
+                    id: 4,
+                    name: 'Bitcoin (BTC)',
+                    type: 'Crypto',
+                    quantity: 0.005,
+                    avgPrice: 5000000, // ₹50,00,000
+                    currentPrice: 5000000,
+                    priceHistory: []
+                },
+                {
+                    id: 5,
+                    name: 'Tata Consultancy (TCS)',
+                    type: 'Stock',
+                    quantity: 40,
+                    avgPrice: 3800,
+                    currentPrice: 3800,
+                    priceHistory: []
+                }
+            ];
+
+            // --- 2. DOM Element References ---
+            const portfolioBody = document.getElementById('portfolio-body');
+            const totalValueEl = document.getElementById('total-value');
+            const totalGainLossEl = document.getElementById('total-gain-loss');
+            const totalInvestedEl = document.getElementById('total-invested');
+            const todayGainLossEl = document.getElementById('today-gain-loss'); // We'll simulate this as part of total gain
+            const loadingEl = document.getElementById('loading');
+
+            // --- Gemini API & Modal References ---
+            const generateSummaryBtn = document.getElementById('generate-summary-btn');
+            const modal = document.getElementById('ai-modal');
+            const modalTitle = document.getElementById('modal-title');
+            const modalCloseBtn = document.getElementById('modal-close-btn');
+            const modalSpinner = document.getElementById('modal-spinner');
+            const modalBodyContent = document.getElementById('modal-body-content');
+            
+            let currentChart = null; // To hold the chart.js instance
+            
+            const apiKey = ""; // Leave empty, will be handled by the environment
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+            // --- 3. Modal Functions ---
+            
+            /**
+             * Shows the AI modal and sets its title and loading state.
+             * @param {boolean} isLoading - Whether to show the loading spinner.
+             * @param {string} title - The title to display in the modal header.
+             */
+            function showModal(isLoading = true, title = "AI Analysis") {
+                modalTitle.textContent = title;
+                if (isLoading) {
+                    modalSpinner.style.display = 'flex';
+                    modalBodyContent.style.display = 'none';
+                } else {
+                    modalSpinner.style.display = 'none';
+                    modalBodyContent.style.display = 'block';
+                }
+                modal.classList.remove('invisible', 'opacity-0');
+                modal.querySelector('.modal-content').classList.remove('-translate-y-10', 'scale-95');
+                modal.querySelector('.modal-content').classList.add('translate-y-0', 'scale-100');
+            }
+
+            /**
+             * Hides the AI modal.
+             */
+            function hideModal() {
+                // Destroy any active chart before closing the modal
+                if (currentChart) {
+                    currentChart.destroy();
+                    currentChart = null;
+                }
+                
+                modal.querySelector('.modal-content').classList.add('-translate-y-10', 'scale-95');
+                modal.querySelector('.modal-content').classList.remove('translate-y-0', 'scale-100');
+                modal.classList.add('opacity-0');
+                setTimeout(() => {
+                    modal.classList.add('invisible');
+                    modalBodyContent.innerHTML = ''; // Clear content
+                }, 250); // Wait for transition
+            }
+
+            /**
+             * Displays formatted text content in the modal.
+             * @param {string} htmlContent - The HTML content to display.
+             */
+            function displayModalContent(htmlContent) {
+                // Destroy any active chart before showing new content
+                if (currentChart) {
+                    currentChart.destroy();
+                    currentChart = null;
+                }
+                modalBodyContent.innerHTML = htmlContent;
+                modalSpinner.style.display = 'none';
+                modalBodyContent.style.display = 'block';
+            }
+
+            /**
+             * Displays an error message in the modal.
+             * @param {string} error - The error message.
+             */
+            function displayModalError(error) {
+                displayModalContent(`<p class="text-red-400"><strong>Error:</strong> ${error}</p>`);
+            }
+
+            // --- 4. Gemini API Call ---
+
+            /**
+             * Calls the Gemini API with exponential backoff.
+             * @param {string} userPrompt - The user's prompt.
+             * @param {string} systemPrompt - The system instruction (optional).
+             * @param {boolean} useSearch - Whether to enable Google Search grounding.
+             * @returns {Promise<string>} - A promise that resolves with formatted HTML content.
+             */
+            async function callGeminiAPI(userPrompt, systemPrompt = null, useSearch = false) {
+                let payload = {
+                    contents: [{ parts: [{ text: userPrompt }] }],
+                };
+
+                if (useSearch) {
+                    payload.tools = [{ "google_search": {} }];
+                }
+
+                if (systemPrompt) {
+                    payload.systemInstruction = {
+                        parts: [{ text: systemPrompt }]
+                    };
+                }
+
+                let attempt = 0;
+                const maxAttempts = 5;
+                let delay = 1000; // Start with 1 second
+
+                while (attempt < maxAttempts) {
+                    try {
+                        const response = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (!response.ok) {
+                            throw new Error(`API request failed with status ${response.status}: ${response.statusText}`);
+                        }
+
+                        const result = await response.json();
+                        const candidate = result.candidates?.[0];
+
+                        if (candidate && candidate.content?.parts?.[0]?.text) {
+                            let text = candidate.content.parts[0].text;
+                            
+                            // Format text for better HTML display (simple markdown)
+                            text = text
+                                .replace(/\n/g, '<br>')
+                                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>') // Bold
+                                .replace(/\*(.*?)\*/g, '<em>$1</em>'); // Italics
+
+                            let htmlResponse = `<p>${text}</p>`;
+
+                            // Check for and append grounding sources
+                            const groundingMetadata = candidate.groundingMetadata;
+                            if (useSearch && groundingMetadata && groundingMetadata.groundingAttributions) {
+                                const sources = groundingMetadata.groundingAttributions
+                                    .map(attr => attr.web)
+                                    .filter(web => web && web.uri && web.title);
+                                
+                                if (sources.length > 0) {
+                                    htmlResponse += '<h4 class="text-lg font-semibold mt-6 mb-2 text-white">Sources:</h4>';
+                                    htmlResponse += '<ul class="list-disc list-inside space-y-1">';
+                                    sources.forEach(source => {
+                                        htmlResponse += `<li><a href="${source.uri}" target="_blank" rel="noopener noreferrer" class="text-indigo-400 hover:text-indigo-300 underline">${source.title}</a></li>`;
+                                    });
+                                    htmlResponse += '</ul>';
+                                }
+                            }
+                            return htmlResponse;
+                        } else {
+                            throw new Error("Invalid response structure from API.");
+                        }
+
+                    } catch (error) {
+                        console.warn(`API call attempt ${attempt + 1} failed: ${error.message}`);
+                        attempt++;
+                        if (attempt >= maxAttempts) {
+                            throw new Error(`Failed to get response from Gemini API after ${maxAttempts} attempts.`);
+                        }
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                        delay *= 2; // Exponential backoff
+                    }
+                }
+            }
+
+
+            // --- 5. Helper Functions ---
+
+            /**
+             * Formats a number as Indian Rupee currency.
+             * @param {number} value - The number to format.
+             * @returns {string} - Formatted currency string.
+             */
+            function formatCurrency(value) {
+                if (typeof value !== 'number') {
+                    value = 0;
+                }
+                return new Intl.NumberFormat('en-IN', {
+                    style: 'currency',
+                    currency: 'INR',
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                }).format(value);
+            }
+
+            /**
+             * Returns a green or red Tailwind class based on the value.
+             * @param {number} value - The number (positive or negative).
+             * @returns {string} - Tailwind CSS class.
+             */
+            function getColorClass(value) {
+                if (value > 0) return 'text-green-500';
+                if (value < 0) return 'text-red-500';
+                return 'text-gray-400';
+            }
+
+            /**
+             * Generates initial price history for charts
+             */
+            function prepopulatePriceHistory() {
+                const historyLength = 50;
+                portfolio.forEach(asset => {
+                    let price = asset.currentPrice;
+                    for (let i = 0; i < historyLength; i++) {
+                        const volatility = asset.type === 'Crypto' ? 0.02 : 0.005;
+                        const randomFactor = (Math.random() - 0.45) * volatility; // Slightly biased upwards
+                        price = Math.max(0, price * (1 + randomFactor));
+                        asset.priceHistory.push(price);
+                    }
+                    // Set current price to the last simulated price
+                    asset.currentPrice = price;
+                });
+            }
+
+            // --- 6. Core Logic: Render and Update ---
+
+            /**
+             * Renders the entire portfolio table and summary cards.
+             */
+            function renderPortfolio() {
+                if (loadingEl) {
+                    loadingEl.style.display = 'none';
+                }
+                
+                portfolioBody.innerHTML = ''; // Clear existing table rows
+                let totalPortfolioValue = 0;
+                let totalInvestedValue = 0;
+
+                portfolio.forEach(asset => {
+                    // Calculate values for this asset
+                    const investedValue = asset.quantity * asset.avgPrice;
+                    const currentValue = asset.quantity * asset.currentPrice;
+                    const totalGainLoss = currentValue - investedValue;
+                    const totalGainLossPercent = (totalGainLoss / investedValue) * 100;
+
+                    totalPortfolioValue += currentValue;
+                    totalInvestedValue += investedValue;
+
+                    const gainLossClass = getColorClass(totalGainLoss);
+
+                    const row = document.createElement('tr');
+                    row.className = 'hover:bg-gray-700 transition-colors duration-150';
+
+                    row.innerHTML = `
+                        <!-- Asset Name -->
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <button class="text-sm font-medium text-white text-left hover:text-indigo-400 transition-colors duration-150 asset-chart-btn" data-asset-id="${asset.id}">
+                                ${asset.name}
+                            </button>
+                            <div class="text-xs text-gray-400">${asset.id}</div>
+                        </td>
+
+                        <!-- Type -->
+                        <td class="px-6 py-4 whitespace-nowrap">
+                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                                asset.type === 'Stock' ? 'bg-blue-900 text-blue-200' : 
+                                asset.type === 'Mutual Fund' ? 'bg-purple-900 text-purple-200' :
+                                'bg-yellow-900 text-yellow-200'
+                            }">
+                                ${asset.type}
+                            </span>
+                        </td>
+
+                        <!-- Invested Value -->
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-300">
+                            ${formatCurrency(investedValue)}
+                        </td>
+
+                        <!-- Current Value -->
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold text-white">
+                            ${formatCurrency(currentValue)}
+                        </td>
+
+                        <!-- Total Gain/Loss -->
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold ${gainLossClass}">
+                            <div>${formatCurrency(totalGainLoss)}</div>
+                            <div class="text-xs">(${totalGainLossPercent.toFixed(2)}%)</div>
+                        </td>
+
+                        <!-- Quantity -->
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-300">
+                            ${asset.quantity.toLocaleString()}
+                        </td>
+                        
+                        <!-- Analysis Button -->
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                            <button class="analyze-asset-btn text-indigo-400 hover:text-indigo-300 font-semibold py-1 px-3 rounded-md transition-colors duration-150" data-asset-name="${asset.name}">
+                                Analyze ✨
+                            </button>
+                        </td>
+                    `;
+                    portfolioBody.appendChild(row);
+                });
+
+                // --- Update Summary Cards ---
+                const overallGainLoss = totalPortfolioValue - totalInvestedValue;
+                const overallGainLossPercent = (overallGainLoss / totalInvestedValue) * 100;
+                const overallGainLossClass = getColorClass(overallGainLoss);
+
+                totalInvestedEl.textContent = formatCurrency(totalInvestedValue);
+                totalValueEl.textContent = formatCurrency(totalPortfolioValue);
+                
+                totalGainLossEl.textContent = `${formatCurrency(overallGainLoss)} (${overallGainLossPercent.toFixed(2)}%)`;
+                totalGainLossEl.className = `text-lg font-medium ${overallGainLossClass}`;
+                
+                // Simulating "Today's" gain as a fraction of the total gain
+                const todayGain = overallGainLoss * 0.1; // Simple simulation
+                todayGainLossEl.textContent = formatCurrency(todayGain);
+                todayGainLossEl.className = `text-4xl font-bold ${getColorClass(todayGain)}`;
+
+            }
+
+            /**
+             * Simulates real-time price fluctuations.
+             */
+            function simulatePriceChanges() {
+                portfolio.forEach(asset => {
+                    // Create a small random fluctuation
+                    // The volatility factor makes crypto more volatile than stocks/MFs
+                    const volatility = asset.type === 'Crypto' ? 0.02 : 0.005; // 2% vs 0.5% max change
+                    const randomFactor = (Math.random() - 0.5) * volatility; // -0.5 to 0.5 * volatility
+                    const changeAmount = asset.currentPrice * randomFactor;
+                    
+                    // Update the current price
+                    asset.currentPrice = Math.max(0, asset.currentPrice + changeAmount); // Ensure price doesn't go negative
+                
+                    // Update price history
+                    asset.priceHistory.push(asset.currentPrice);
+                    if (asset.priceHistory.length > 50) { // Keep only last 50 data points
+                        asset.priceHistory.shift();
+                    }
+                });
+
+                // Re-render the UI with new data
+                renderPortfolio();
+            }
+            
+            // --- 7. AI Event Handlers ---
+
+            /**
+             * Handles the "Generate Portfolio Summary" button click.
+             */
+            async function handleGenerateSummary() {
+                showModal(true, "Generating Portfolio Summary...");
+                try {
+                    // 1. Collect data
+                    let totalPortfolioValue = 0;
+                    let totalInvestedValue = 0;
+                    const assetSummaries = portfolio.map(asset => {
+                        const investedValue = asset.quantity * asset.avgPrice;
+                        const currentValue = asset.quantity * asset.currentPrice;
+                        totalPortfolioValue += currentValue;
+                        totalInvestedValue += investedValue;
+                        return {
+                            name: asset.name,
+                            type: asset.type,
+                            currentValue: currentValue,
+                            gainLoss: currentValue - investedValue
+                        };
+                    });
+                    const overallGainLoss = totalPortfolioValue - totalInvestedValue;
+                    
+                    // 2. Create Prompts
+                    const systemPrompt = "You are a concise and encouraging financial analyst. Your goal is to provide a brief, easy-to-understand summary of a user's portfolio. Do not give financial advice. Focus on summarizing the data provided.";
+                    const userPrompt = `
+Please provide a brief, one-paragraph summary for the following portfolio:
+- Total Value: ${formatCurrency(totalPortfolioValue)}
+- Total Invested: ${formatCurrency(totalInvestedValue)}
+- Overall Gain/Loss: ${formatCurrency(overallGainLoss)}
+- Holdings: ${JSON.stringify(assetSummaries)}
+
+Summarize the performance, mention the total value and gain/loss, and perhaps note the mixture of assets.
+`;
+
+                    // 3. Call API
+                    const htmlResponse = await callGeminiAPI(userPrompt, systemPrompt, false);
+                    displayModalContent(htmlResponse);
+
+                } catch (error) {
+                    console.error(error);
+                    displayModalError(error.message);
+                }
+            }
+
+            /**
+             * Handles the "Analyze Asset" button click using event delegation.
+             * @param {Event} e - The click event.
+             */
+            async function handleAnalyzeAsset(e) {
+                const button = e.target.closest('.analyze-asset-btn');
+                if (!button) return;
+
+                const assetName = button.dataset.assetName;
+                if (!assetName) return;
+
+                showModal(true, `Analyzing ${assetName}...`);
+                try {
+                    // 1. Create Prompts
+                    const systemPrompt = "You are a financial analyst providing a brief, factual overview of an asset for an investor. Use the search tool to find recent, relevant information. Do not give buy/sell advice.";
+                    const userPrompt = `
+Provide a brief, 2-3 sentence overview of the following company/asset: ${assetName}.
+After the overview, find 1-2 recent (past few months) news headlines or key developments related to it.
+Keep the entire response concise.
+`;
+
+                    // 2. Call API (with search)
+                    const htmlResponse = await callGeminiAPI(userPrompt, systemPrompt, true);
+                    displayModalContent(htmlResponse);
+
+                } catch (error) {
+                    console.error(error);
+                    displayModalError(error.message);
+                }
+            }
+
+
+            // --- 8. Charting Functions ---
+            
+            /**
+             * Handles the "Show Chart" button click using event delegation.
+             * @param {Event} e - The click event.
+             */
+            function handleShowPriceChart(e) {
+                const button = e.target.closest('.asset-chart-btn');
+                if (!button) return;
+
+                const assetId = button.dataset.assetId;
+                const asset = portfolio.find(a => a.id.toString() === assetId);
+                
+                if (asset) {
+                    displayPriceChart(asset);
+                }
+            }
+
+            /**
+             * Renders and displays a price chart in the modal.
+             * @param {object} asset - The asset object to chart.
+             */
+            function displayPriceChart(asset) {
+                // Destroy any existing chart
+                if (currentChart) {
+                    currentChart.destroy();
+                    currentChart = null;
+                }
+
+                // Set up canvas in modal
+                modalBodyContent.innerHTML = '<canvas id="price-chart"></canvas>';
+                showModal(false, `Price Chart: ${asset.name}`);
+                
+                const ctx = document.getElementById('price-chart').getContext('2d');
+                
+                const labels = asset.priceHistory.map((_, i) => i + 1);
+                const data = asset.priceHistory;
+
+                const gainLossColor = data[data.length - 1] > data[0] ? 'rgb(34, 197, 94)' : 'rgb(239, 68, 68)';
+
+                currentChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Price (₹)',
+                            data: data,
+                            borderColor: gainLossColor,
+                            backgroundColor: 'rgba(0, 0, 0, 0)', // Transparent
+                            borderWidth: 2,
+                            pointRadius: 0, // No dots
+                            tension: 0.1 // Smooth curve
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        scales: {
+                            x: {
+                                grid: {
+                                    color: 'rgba(255, 255, 255, 0.1)' // Light grid lines for dark mode
+                                },
+                                ticks: {
+                                    color: 'rgb(156, 163, 175)', // gray-400
+                                    display: false // Hide x-axis labels for a cleaner look
+                                }
+                            },
+                            y: {
+                                grid: {
+                                    color: 'rgba(255, 255, 255, 0.1)'
+                                },
+                                ticks: {
+                                    color: 'rgb(156, 163, 175)', // gray-400
+                                    // Format as currency
+                                    callback: function(value, index, ticks) {
+                                        return formatCurrency(value);
+                                    }
+                                }
+                            }
+                        },
+                        plugins: {
+                            legend: {
+                                display: false // Hide legend
+                            },
+                            tooltip: {
+                                mode: 'index',
+                                intersect: false,
+                                backgroundColor: 'rgb(31, 41, 55)', // gray-800
+                                titleColor: 'rgb(229, 231, 235)', // gray-200
+                                bodyColor: 'rgb(229, 231, 235)',
+                                callbacks: {
+                                    label: function(context) {
+                                        return `Price: ${formatCurrency(context.parsed.y)}`;
+                                    }
+                                }
+                            }
+                        },
+                        interaction: {
+                            mode: 'nearest',
+                            axis: 'x',
+                            intersect: false
+                        }
+                    }
+                });
+            }
+
+            // --- 9. Initializations ---
+            
+            // Pre-populate price history for charts
+            prepopulatePriceHistory();
+            
+            // Initial render on page load
+            renderPortfolio();
+
+            // Start the real-time simulation interval (e.g., every 3 seconds)
+            setInterval(simulatePriceChanges, 3000);
+
+            // --- AI & Chart Event Listeners ---
+            generateSummaryBtn.addEventListener('click', handleGenerateSummary);
+            portfolioBody.addEventListener('click', handleAnalyzeAsset);
+            portfolioBody.addEventListener('click', handleShowPriceChart); // Added chart listener
+            
+            modalCloseBtn.addEventListener('click', hideModal);
+            // Close modal on outside click
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    hideModal();
+                }
+            });
+        });
+    </script>
+</body>
+</html>
