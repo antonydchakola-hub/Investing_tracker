@@ -14,7 +14,6 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// Asset represents your investment data
 type Asset struct {
 	ID            int     `json:"id"`
 	Name          string  `json:"name"`
@@ -23,15 +22,14 @@ type Asset struct {
 	AvgPrice      float64 `json:"avgPrice"`
 	CurrentPrice  float64 `json:"currentPrice"`
 	PreviousClose float64 `json:"previousClose"`
-	Currency      string  `json:"currency"` // NEW FIELD
+	Currency      string  `json:"currency"`
 }
 
-// Yahoo Finance API Response Structure
 type YahooResponse struct {
 	Chart struct {
 		Result []struct {
 			Meta struct {
-				Currency           string  `json:"currency"` // Yahoo tells us if it's USD or INR
+				Currency           string  `json:"currency"`
 				RegularMarketPrice float64 `json:"regularMarketPrice"`
 				ChartPreviousClose float64 `json:"chartPreviousClose"`
 			} `json:"meta"`
@@ -73,7 +71,7 @@ func main() {
 
 	// --- ROUTES ---
 
-	// POST: Save a new asset (Default to USD, will update on refresh)
+	// POST: Save OR Merge Asset (With NULL protection)
 	r.POST("/api/assets", func(c *gin.Context) {
 		var input Asset
 		if err := c.ShouldBindJSON(&input); err != nil {
@@ -81,27 +79,78 @@ func main() {
 			return
 		}
 
-		// Determine currency based on input (Basic guess, refined later by Yahoo)
-		currency := "USD"
-		if strings.HasSuffix(input.Name, ".NS") || strings.HasSuffix(input.Name, ".BO") {
-			currency = "INR"
-		}
+		// 1. Check if asset exists (Handle NULLs with COALESCE)
+		var existingID int
+		var existingQty float64
+		var existingAvgPrice float64
 
-		query := `INSERT INTO assets (name, asset_type, quantity, avg_price, current_price, previous_close, currency) VALUES ($1, $2, $3, $4, $4, $4, $5)`
-		_, err := conn.Exec(context.Background(), query, input.Name, input.Type, input.Quantity, input.AvgPrice, currency)
+		// We use COALESCE(x, 0) so if DB has NULL, we get 0 instead of crashing
+		queryCheck := `SELECT id, COALESCE(quantity, 0), COALESCE(avg_price, 0) FROM assets WHERE name=$1 LIMIT 1`
+		err := conn.QueryRow(context.Background(), queryCheck, input.Name).Scan(&existingID, &existingQty, &existingAvgPrice)
 
-		if err != nil {
-			fmt.Println("Insert Error:", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save"})
+		if err == pgx.ErrNoRows {
+			// --- NEW ASSET ---
+			currency := "USD"
+			if strings.HasSuffix(input.Name, ".NS") || strings.HasSuffix(input.Name, ".BO") {
+				currency = "INR"
+			}
+
+			insertQ := `INSERT INTO assets (name, asset_type, quantity, avg_price, current_price, previous_close, currency) VALUES ($1, $2, $3, $4, $4, $4, $5)`
+			_, err := conn.Exec(context.Background(), insertQ, input.Name, input.Type, input.Quantity, input.AvgPrice, currency)
+
+			if err != nil {
+				fmt.Println("Insert Error:", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to insert"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "Asset saved!"})
+
+		} else if err != nil {
+			fmt.Println("Query Error:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 			return
+
+		} else {
+			// --- MERGE ---
+			newTotalQty := existingQty + input.Quantity
+
+			var newAvgPrice float64
+			if newTotalQty > 0 {
+				totalCost := (existingQty * existingAvgPrice) + (input.Quantity * input.AvgPrice)
+				newAvgPrice = totalCost / newTotalQty
+			} else {
+				newAvgPrice = 0
+			}
+
+			_, err = conn.Exec(context.Background(), "UPDATE assets SET quantity=$1, avg_price=$2 WHERE id=$3", newTotalQty, newAvgPrice, existingID)
+
+			if err != nil {
+				fmt.Println("Update Error:", err)
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "Asset merged!"})
 		}
-		c.JSON(http.StatusOK, gin.H{"message": "Asset saved!"})
 	})
 
-	// GET: Fetch all assets
+	// GET: Fetch all assets (FIXED: Uses COALESCE to prevent crash on NULLs)
 	r.GET("/api/assets", func(c *gin.Context) {
-		rows, err := conn.Query(context.Background(), "SELECT id, name, asset_type, quantity, avg_price, current_price, previous_close, currency FROM assets")
+		// The COALESCE functions here are the magic fix. They replace NULL with 0 or 'USD'.
+		query := `
+			SELECT 
+				id, 
+				name, 
+				asset_type, 
+				COALESCE(quantity, 0), 
+				COALESCE(avg_price, 0), 
+				COALESCE(current_price, 0), 
+				COALESCE(previous_close, 0), 
+				COALESCE(currency, 'USD') 
+			FROM assets`
+
+		rows, err := conn.Query(context.Background(), query)
 		if err != nil {
+			fmt.Println("GET Error:", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Query failed"})
 			return
 		}
@@ -111,6 +160,7 @@ func main() {
 		for rows.Next() {
 			var a Asset
 			if err := rows.Scan(&a.ID, &a.Name, &a.Type, &a.Quantity, &a.AvgPrice, &a.CurrentPrice, &a.PreviousClose, &a.Currency); err != nil {
+				fmt.Println("Scan Error (Skipping row):", err)
 				continue
 			}
 			assets = append(assets, a)
@@ -118,13 +168,10 @@ func main() {
 		c.JSON(http.StatusOK, assets)
 	})
 
-	// GET: Fetch Exchange Rates (USD base)
+	// GET: Exchange Rates
 	r.GET("/api/rates", func(c *gin.Context) {
-		// We fetch INR=X (USD to INR) and SGD=X (USD to SGD)
 		inrRate, _, _ := fetchLivePrice("INR=X")
 		sgdRate, _, _ := fetchLivePrice("SGD=X")
-
-		// If fetch fails, provide safe fallbacks
 		if inrRate == 0 {
 			inrRate = 83.0
 		}
@@ -132,14 +179,10 @@ func main() {
 			sgdRate = 1.35
 		}
 
-		c.JSON(http.StatusOK, gin.H{
-			"USD": 1.0,
-			"INR": inrRate,
-			"SGD": sgdRate,
-		})
+		c.JSON(http.StatusOK, gin.H{"USD": 1.0, "INR": inrRate, "SGD": sgdRate})
 	})
 
-	// POST: Trigger Price Update
+	// POST: Update Prices
 	r.POST("/api/update-prices", func(c *gin.Context) {
 		rows, err := conn.Query(context.Background(), "SELECT id, name FROM assets")
 		if err != nil {
@@ -166,15 +209,12 @@ func main() {
 				continue
 			}
 
-			// Fetch Price, Close, AND Currency from Yahoo
 			price, prevClose, currency, err := fetchLivePriceExtended(symbol)
-
 			if err != nil {
 				fmt.Printf("Failed: %s - %v\n", symbol, err)
 				continue
 			}
 
-			// Update everything including detected currency
 			_, err = conn.Exec(context.Background(), "UPDATE assets SET current_price=$1, previous_close=$2, currency=$3 WHERE id=$4", price, prevClose, currency, t.ID)
 			if err == nil {
 				fmt.Printf("Updated %s: %f %s\n", symbol, price, currency)
@@ -188,13 +228,12 @@ func main() {
 	r.Run(":8080")
 }
 
-// Helper: Basic fetch (reused for rates)
+// Helpers
 func fetchLivePrice(symbol string) (float64, float64, error) {
 	p, c, _, err := fetchLivePriceExtended(symbol)
 	return p, c, err
 }
 
-// Helper: Detailed fetch including Currency
 func fetchLivePriceExtended(symbol string) (float64, float64, string, error) {
 	url := fmt.Sprintf("https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=1d", symbol)
 	req, _ := http.NewRequest("GET", url, nil)
