@@ -124,7 +124,7 @@
             if(currencySelector) currencySelector.value = selectedCurrency;
 
             try {
-                const res = await fetch('http://localhost:8080/api/rates');
+                const res = await fetch('https://investing-tracker.onrender.com/api/rates');
                 if (res.ok) {
                     exchangeRates = await res.json();
                     console.log("Rates updated:", exchangeRates);
@@ -167,7 +167,7 @@
             refreshPricesBtn.innerHTML = "Updating... ⏳";
             refreshPricesBtn.disabled = true;
             try {
-                await fetch('http://localhost:8080/api/update-prices', { method: 'POST' });
+                await fetch('https://investing-tracker.onrender.com/api/update-prices', { method: 'POST' });
                 await loadPortfolio();
             } catch (e) { alert("Backend offline? Ensure 'go run main.go' is running."); }
             refreshPricesBtn.innerHTML = originalText;
@@ -179,7 +179,7 @@
             loadingEl.style.display = 'block';
             if(loadingEl2) loadingEl2.style.display = 'block';
             try {
-                const response = await fetch('http://localhost:8080/api/assets');
+                const response = await fetch('https://investing-tracker.onrender.com/api/assets');
                 const portfolio = await response.json();
                 renderPortfolio(portfolio || []); 
             } catch (error) {
@@ -362,7 +362,7 @@
                 quantity: parseFloat(formData.get('quantity')),
                 avgPrice: parseFloat(formData.get('avg-price'))
             };
-            await fetch('http://localhost:8080/api/assets', { method: 'POST', body: JSON.stringify(newAsset) });
+            await fetch('https://investing-tracker.onrender.com/api/assets', { method: 'POST', body: JSON.stringify(newAsset) });
             hideAddAssetModal();
             loadPortfolio();
         }
