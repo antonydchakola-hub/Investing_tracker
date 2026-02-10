@@ -128,7 +128,7 @@
             if(currencySelector) currencySelector.value = selectedCurrency;
 
             try {
-                const res = await fetch('https://investing-tracker.onrender.com/api/rates');
+                const res = await fetch('https://investing-tracker.onrender.com/api/rates?t=${Date.now()}');
                 if (res.ok) {
                     exchangeRates = await res.json();
                     console.log("Rates updated:", exchangeRates);
@@ -183,7 +183,7 @@
             loadingEl.style.display = 'block';
             if(loadingEl2) loadingEl2.style.display = 'block';
             try {
-                const response = await fetch('https://investing-tracker.onrender.com/api/assets');
+                const response = await fetch('https://investing-tracker.onrender.com/api/assets?t=${Date.now()}');
                 const portfolio = await response.json();
                 renderPortfolio(portfolio || []); 
             } catch (error) {
