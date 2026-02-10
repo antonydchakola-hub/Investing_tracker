@@ -11,9 +11,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool" // <--- NEW IMPORT
 	"github.com/joho/godotenv"
 )
 
+// Data Structures
 type Asset struct {
 	ID            int     `json:"id"`
 	Name          string  `json:"name"`
@@ -40,24 +42,26 @@ type YahooResponse struct {
 func main() {
 	err := godotenv.Load()
 	if err != nil {
-		log.Println("Warning: No .env file found.")
+		log.Println("Warning: No .env file found (this is fine on Render).")
 	}
 
 	connStr := os.Getenv("DB_URL")
 	if connStr == "" {
-		log.Fatal("DB_URL not found in .env file")
+		log.Fatal("DB_URL not found in environment variables")
 	}
 
-	conn, err := pgx.Connect(context.Background(), connStr)
+	// --- CHANGE 1: Use Connection Pool instead of single connection ---
+	dbPool, err := pgxpool.New(context.Background(), connStr)
 	if err != nil {
 		log.Fatal("Unable to connect to database: ", err)
 	}
-	defer conn.Close(context.Background())
-	fmt.Println("Successfully connected to Supabase cloud!")
+	defer dbPool.Close() // Close pool when main shuts down
+
+	fmt.Println("Successfully connected to Supabase (Pool Mode)!")
 
 	r := gin.Default()
 
-	// CORS
+	// CORS Setup
 	r.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
@@ -71,7 +75,7 @@ func main() {
 
 	// --- ROUTES ---
 
-	// POST: Save OR Merge Asset (With NULL protection)
+	// POST: Save OR Merge Asset
 	r.POST("/api/assets", func(c *gin.Context) {
 		var input Asset
 		if err := c.ShouldBindJSON(&input); err != nil {
@@ -79,41 +83,37 @@ func main() {
 			return
 		}
 
-		// 1. Check if asset exists (Handle NULLs with COALESCE)
 		var existingID int
 		var existingQty float64
 		var existingAvgPrice float64
 
-		// We use COALESCE(x, 0) so if DB has NULL, we get 0 instead of crashing
+		// Use dbPool (it handles connections automatically)
 		queryCheck := `SELECT id, COALESCE(quantity, 0), COALESCE(avg_price, 0) FROM assets WHERE name=$1 LIMIT 1`
-		err := conn.QueryRow(context.Background(), queryCheck, input.Name).Scan(&existingID, &existingQty, &existingAvgPrice)
+		err := dbPool.QueryRow(context.Background(), queryCheck, input.Name).Scan(&existingID, &existingQty, &existingAvgPrice)
 
 		if err == pgx.ErrNoRows {
-			// --- NEW ASSET ---
+			// New Asset
 			currency := "USD"
 			if strings.HasSuffix(input.Name, ".NS") || strings.HasSuffix(input.Name, ".BO") {
 				currency = "INR"
 			}
 
 			insertQ := `INSERT INTO assets (name, asset_type, quantity, avg_price, current_price, previous_close, currency) VALUES ($1, $2, $3, $4, $4, $4, $5)`
-			_, err := conn.Exec(context.Background(), insertQ, input.Name, input.Type, input.Quantity, input.AvgPrice, currency)
+			_, err := dbPool.Exec(context.Background(), insertQ, input.Name, input.Type, input.Quantity, input.AvgPrice, currency)
 
 			if err != nil {
-				fmt.Println("Insert Error:", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to insert"})
 				return
 			}
 			c.JSON(http.StatusOK, gin.H{"message": "Asset saved!"})
 
 		} else if err != nil {
-			fmt.Println("Query Error:", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 			return
 
 		} else {
-			// --- MERGE ---
+			// Merge Asset
 			newTotalQty := existingQty + input.Quantity
-
 			var newAvgPrice float64
 			if newTotalQty > 0 {
 				totalCost := (existingQty * existingAvgPrice) + (input.Quantity * input.AvgPrice)
@@ -122,10 +122,8 @@ func main() {
 				newAvgPrice = 0
 			}
 
-			_, err = conn.Exec(context.Background(), "UPDATE assets SET quantity=$1, avg_price=$2 WHERE id=$3", newTotalQty, newAvgPrice, existingID)
-
+			_, err = dbPool.Exec(context.Background(), "UPDATE assets SET quantity=$1, avg_price=$2 WHERE id=$3", newTotalQty, newAvgPrice, existingID)
 			if err != nil {
-				fmt.Println("Update Error:", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update"})
 				return
 			}
@@ -133,14 +131,11 @@ func main() {
 		}
 	})
 
-	// GET: Fetch all assets (FIXED: Uses COALESCE to prevent crash on NULLs)
+	// GET: Fetch all assets
 	r.GET("/api/assets", func(c *gin.Context) {
-		// The COALESCE functions here are the magic fix. They replace NULL with 0 or 'USD'.
 		query := `
 			SELECT 
-				id, 
-				name, 
-				asset_type, 
+				id, name, asset_type, 
 				COALESCE(quantity, 0), 
 				COALESCE(avg_price, 0), 
 				COALESCE(current_price, 0), 
@@ -148,9 +143,8 @@ func main() {
 				COALESCE(currency, 'USD') 
 			FROM assets`
 
-		rows, err := conn.Query(context.Background(), query)
+		rows, err := dbPool.Query(context.Background(), query)
 		if err != nil {
-			fmt.Println("GET Error:", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Query failed"})
 			return
 		}
@@ -159,8 +153,8 @@ func main() {
 		var assets []Asset
 		for rows.Next() {
 			var a Asset
-			if err := rows.Scan(&a.ID, &a.Name, &a.Type, &a.Quantity, &a.AvgPrice, &a.CurrentPrice, &a.PreviousClose, &a.Currency); err != nil {
-				fmt.Println("Scan Error (Skipping row):", err)
+			err := rows.Scan(&a.ID, &a.Name, &a.Type, &a.Quantity, &a.AvgPrice, &a.CurrentPrice, &a.PreviousClose, &a.Currency)
+			if err != nil {
 				continue
 			}
 			assets = append(assets, a)
@@ -168,15 +162,17 @@ func main() {
 		c.JSON(http.StatusOK, assets)
 	})
 
-	// GET: Exchange Rates
+	// GET: Exchange Rates (With Updated Fallback)
 	r.GET("/api/rates", func(c *gin.Context) {
 		inrRate, _, _ := fetchLivePrice("INR=X")
 		sgdRate, _, _ := fetchLivePrice("SGD=X")
+
+		// Fallbacks updated for current market
 		if inrRate == 0 {
-			inrRate = 83.0
+			inrRate = 87.0
 		}
 		if sgdRate == 0 {
-			sgdRate = 1.35
+			sgdRate = 1.36
 		}
 
 		c.JSON(http.StatusOK, gin.H{"USD": 1.0, "INR": inrRate, "SGD": sgdRate})
@@ -184,12 +180,11 @@ func main() {
 
 	// POST: Update Prices
 	r.POST("/api/update-prices", func(c *gin.Context) {
-		rows, err := conn.Query(context.Background(), "SELECT id, name FROM assets")
+		rows, err := dbPool.Query(context.Background(), "SELECT id, name FROM assets")
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch assets"})
 			return
 		}
-		defer rows.Close()
 
 		type AssetShort struct {
 			ID   int
@@ -201,6 +196,7 @@ func main() {
 			rows.Scan(&t.ID, &t.Name)
 			targets = append(targets, t)
 		}
+		rows.Close() // Close early to free up connection
 
 		updatedCount := 0
 		for _, t := range targets {
@@ -211,13 +207,11 @@ func main() {
 
 			price, prevClose, currency, err := fetchLivePriceExtended(symbol)
 			if err != nil {
-				fmt.Printf("Failed: %s - %v\n", symbol, err)
 				continue
 			}
 
-			_, err = conn.Exec(context.Background(), "UPDATE assets SET current_price=$1, previous_close=$2, currency=$3 WHERE id=$4", price, prevClose, currency, t.ID)
+			_, err = dbPool.Exec(context.Background(), "UPDATE assets SET current_price=$1, previous_close=$2, currency=$3 WHERE id=$4", price, prevClose, currency, t.ID)
 			if err == nil {
-				fmt.Printf("Updated %s: %f %s\n", symbol, price, currency)
 				updatedCount++
 			}
 		}
