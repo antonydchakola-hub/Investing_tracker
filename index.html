@@ -26,7 +26,7 @@
         // Asset Details Modal
         let assetDetailsModal, assetDetailsModalBackdrop, closeDetailsModalBtn, assetDetailsNameEl, assetDetailsContentEl;
 
-        // --- 3. Style Definitions (Restored) ---
+        // --- 3. Style Definitions ---
         const styles = `
             body { font-family: 'Inter', sans-serif; }
             .modal-backdrop { transition: opacity 0.25s ease; z-index: 50; }
@@ -128,7 +128,7 @@
             if(currencySelector) currencySelector.value = selectedCurrency;
 
             try {
-                const res = await fetch('https://investing-tracker.onrender.com/api/rates?t=${Date.now()}');
+                const res = await fetch(`https://investing-tracker.onrender.com/api/rates?t=${Date.now()}`);
                 if (res.ok) {
                     exchangeRates = await res.json();
                     console.log("Rates updated:", exchangeRates);
@@ -183,7 +183,7 @@
             loadingEl.style.display = 'block';
             if(loadingEl2) loadingEl2.style.display = 'block';
             try {
-                const response = await fetch('https://investing-tracker.onrender.com/api/assets?t=${Date.now()}');
+                const response = await fetch(`https://investing-tracker.onrender.com/api/assets?t=${Date.now()}`);
                 const portfolio = await response.json();
                 renderPortfolio(portfolio || []); 
             } catch (error) {
@@ -256,6 +256,9 @@
                  portfolioBody.innerHTML = `<tr><td colspan="6" class="px-6 py-12 text-center text-gray-500">Your portfolio is empty. Add an asset to get started.</td></tr>`;
             } else {
                 processedAssets.sort((a, b) => b.convertedCurrent - a.convertedCurrent).forEach(asset => {
+                    // NEW: Calculate individual percentage gain
+                    const nativeGainPct = asset.nativeInvested === 0 ? 0 : (asset.nativeGain / asset.nativeInvested) * 100;
+                    
                     const row = document.createElement('tr');
                     row.className = 'hover:bg-gray-700 transition-colors duration-150 cursor-pointer';
                     row.innerHTML = `
@@ -265,6 +268,7 @@
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold text-white">${formatMoney(asset.nativeCurrent, asset.assetCcy)}</td>
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold ${getColorClass(asset.nativeGain)}">
                             <div>${formatMoney(asset.nativeGain, asset.assetCcy)}</div>
+                            <div class="text-xs">(${nativeGainPct.toFixed(2)}%)</div>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-300">${asset.quantity}</td>
                     `;
@@ -300,8 +304,6 @@
                         <div class="text-xs">(${gainPct.toFixed(2)}%)</div>
                     </td>
                 `;
-                // Re-enable drill down if desired
-                // row.addEventListener('click', () => showTypeDetailsModal(summary)); 
                 portfolioByTypeBody.appendChild(row);
             });
         }

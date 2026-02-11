@@ -96,6 +96,8 @@ func main() {
 			currency := "USD"
 			if strings.HasSuffix(input.Name, ".NS") || strings.HasSuffix(input.Name, ".BO") {
 				currency = "INR"
+			} else if strings.HasSuffix(input.Name, ".SI") {
+				currency = "SGD"
 			}
 
 			insertQ := `INSERT INTO assets (name, asset_type, quantity, avg_price, current_price, previous_close, currency) VALUES ($1, $2, $3, $4, $4, $4, $5)`
