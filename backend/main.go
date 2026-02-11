@@ -8,10 +8,11 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool" // <--- NEW IMPORT
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 )
 
@@ -40,6 +41,7 @@ type YahooResponse struct {
 }
 
 func main() {
+	// 1. Load Environment Variables
 	err := godotenv.Load()
 	if err != nil {
 		log.Println("Warning: No .env file found (this is fine on Render).")
@@ -50,21 +52,22 @@ func main() {
 		log.Fatal("DB_URL not found in environment variables")
 	}
 
-	// --- CHANGE 1: Use Connection Pool instead of single connection ---
+	// 2. Connect to Database (Using Pool for concurrency)
 	dbPool, err := pgxpool.New(context.Background(), connStr)
 	if err != nil {
 		log.Fatal("Unable to connect to database: ", err)
 	}
-	defer dbPool.Close() // Close pool when main shuts down
+	defer dbPool.Close()
 
 	fmt.Println("Successfully connected to Supabase (Pool Mode)!")
 
+	// 3. Setup Router
 	r := gin.Default()
 
-	// CORS Setup
+	// CORS Setup (Allow Frontend to talk to Backend)
 	r.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, DELETE")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
@@ -87,12 +90,12 @@ func main() {
 		var existingQty float64
 		var existingAvgPrice float64
 
-		// Use dbPool (it handles connections automatically)
+		// Check if asset already exists
 		queryCheck := `SELECT id, COALESCE(quantity, 0), COALESCE(avg_price, 0) FROM assets WHERE name=$1 LIMIT 1`
 		err := dbPool.QueryRow(context.Background(), queryCheck, input.Name).Scan(&existingID, &existingQty, &existingAvgPrice)
 
 		if err == pgx.ErrNoRows {
-			// New Asset
+			// New Asset Logic
 			currency := "USD"
 			if strings.HasSuffix(input.Name, ".NS") || strings.HasSuffix(input.Name, ".BO") {
 				currency = "INR"
@@ -114,7 +117,7 @@ func main() {
 			return
 
 		} else {
-			// Merge Asset
+			// Merge Logic (Weighted Average)
 			newTotalQty := existingQty + input.Quantity
 			var newAvgPrice float64
 			if newTotalQty > 0 {
@@ -143,7 +146,7 @@ func main() {
 				COALESCE(current_price, 0), 
 				COALESCE(previous_close, 0), 
 				COALESCE(currency, 'USD') 
-			FROM assets`
+			FROM assets ORDER BY (current_price * quantity) DESC`
 
 		rows, err := dbPool.Query(context.Background(), query)
 		if err != nil {
@@ -164,12 +167,12 @@ func main() {
 		c.JSON(http.StatusOK, assets)
 	})
 
-	// GET: Exchange Rates (With Updated Fallback)
+	// GET: Exchange Rates
 	r.GET("/api/rates", func(c *gin.Context) {
 		inrRate, _, _ := fetchLivePrice("INR=X")
 		sgdRate, _, _ := fetchLivePrice("SGD=X")
 
-		// Fallbacks updated for current market
+		// Fallbacks if Yahoo blocks us
 		if inrRate == 0 {
 			inrRate = 87.0
 		}
@@ -180,7 +183,7 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"USD": 1.0, "INR": inrRate, "SGD": sgdRate})
 	})
 
-	// POST: Update Prices
+	// POST: Update Prices (Scraper)
 	r.POST("/api/update-prices", func(c *gin.Context) {
 		rows, err := dbPool.Query(context.Background(), "SELECT id, name FROM assets")
 		if err != nil {
@@ -198,11 +201,12 @@ func main() {
 			rows.Scan(&t.ID, &t.Name)
 			targets = append(targets, t)
 		}
-		rows.Close() // Close early to free up connection
+		rows.Close()
 
 		updatedCount := 0
 		for _, t := range targets {
 			symbol := t.Name
+			// Skip testing symbols
 			if strings.Contains(symbol, " ") || strings.Contains(strings.ToLower(symbol), "test") {
 				continue
 			}
@@ -212,6 +216,7 @@ func main() {
 				continue
 			}
 
+			// Update DB
 			_, err = dbPool.Exec(context.Background(), "UPDATE assets SET current_price=$1, previous_close=$2, currency=$3 WHERE id=$4", price, prevClose, currency, t.ID)
 			if err == nil {
 				updatedCount++
@@ -220,6 +225,39 @@ func main() {
 
 		c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("Updated %d assets", updatedCount)})
 	})
+
+	// --- NEW: DELETE ROUTE ---
+	r.DELETE("/api/assets/:id", func(c *gin.Context) {
+		id := c.Param("id")
+
+		// Delete from database
+		_, err := dbPool.Exec(context.Background(), "DELETE FROM assets WHERE id=$1", id)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "Asset deleted"})
+	})
+
+	// --- KEEP-ALIVE (SELF PING) ---
+	// REPLACE THIS URL WITH YOUR ACTUAL RENDER BACKEND URL
+	// Example: "https://investing-tracker.onrender.com/api/rates"
+	url := "https://YOUR-APP-NAME.onrender.com/api/rates"
+
+	go func() {
+		time.Sleep(1 * time.Minute) // Wait for server to boot
+		ticker := time.NewTicker(10 * time.Minute)
+		for range ticker.C {
+			resp, err := http.Get(url)
+			if err != nil {
+				fmt.Println("Keep-alive ping failed:", err)
+			} else {
+				fmt.Println("Keep-alive ping success! Status:", resp.StatusCode)
+				resp.Body.Close()
+			}
+		}
+	}()
 
 	r.Run(":8080")
 }
