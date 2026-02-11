@@ -394,6 +394,9 @@
                 alert("Error connecting to server");
             }
         }
+
+        window.deleteAsset = deleteAsset;
+        
         function hideAssetDetailsModal() {
             assetDetailsModal.classList.add('-translate-y-10', 'scale-95');
             assetDetailsModal.classList.remove('translate-y-0', 'scale-100');
