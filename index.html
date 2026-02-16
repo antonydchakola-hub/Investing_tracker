@@ -6,12 +6,14 @@
     <title>Investment Tracker</title>
     <link rel="apple-touch-icon" href="icon.png">
     <link rel="icon" type="image/png" href="icon.png">
+    
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
     <script type="module">
         // --- CONFIG ---
-        // REPLACE THIS WITH YOUR RENDER URL
         const BACKEND_URL = "https://investing-tracker.onrender.com";
 
         // --- STATE ---
@@ -19,6 +21,7 @@
         let currentUsername = null;
         let exchangeRates = { USD: 1, INR: 83, SGD: 1.35 };
         let selectedCurrency = "INR";
+        let currentChart = null; // NEW: Keeps track of the drawing canvas
 
         // --- DOM Elements ---
         let loginView, appView, portfolioBody, portfolioByTypeBody, totalValueEl, totalGainLossEl, totalInvestedEl, todayGainLossEl, loadingEl, loadingEl2;
@@ -141,7 +144,6 @@
             const u = document.getElementById('signup-username').value;
             const p = document.getElementById('signup-password').value;
             
-            // Easy password check - just ensure not empty
             if (!p) { alert("Password cannot be empty"); return; }
 
             try {
@@ -153,7 +155,6 @@
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error);
 
-                // Auto login after signup
                 currentUserId = data.userId;
                 currentUsername = data.username;
                 sessionStorage.setItem('userId', currentUserId);
@@ -192,7 +193,6 @@
             loadingEl.style.display = 'block';
             if(loadingEl2) loadingEl2.style.display = 'block';
             try {
-                // SEND USER ID IN HEADER
                 const response = await fetch(`${BACKEND_URL}/api/assets?t=${Date.now()}`, {
                     headers: { 'X-User-ID': currentUserId }
                 });
@@ -218,7 +218,7 @@
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'application/json',
-                    'X-User-ID': currentUserId // Auth Header
+                    'X-User-ID': currentUserId
                 },
                 body: JSON.stringify(newAsset)
             });
@@ -233,7 +233,7 @@
             
             await fetch(`${BACKEND_URL}/api/assets/${id}`, { 
                 method: 'DELETE',
-                headers: { 'X-User-ID': currentUserId } // Auth Header
+                headers: { 'X-User-ID': currentUserId } 
             });
             hideAssetDetailsModal();
             loadPortfolio();
@@ -245,7 +245,6 @@
             refreshPricesBtn.innerHTML = "Updating... ⏳";
             refreshPricesBtn.disabled = true;
             try {
-                // Update prices (Global, so no user ID strictly needed, but good practice)
                 await fetch(`${BACKEND_URL}/api/update-prices`, { method: 'POST' });
                 await loadPortfolio();
             } catch (e) { alert("Backend offline?"); }
@@ -253,7 +252,7 @@
             refreshPricesBtn.disabled = false;
         }
 
-        // --- RENDER FUNCTIONS (Same as before) ---
+        // --- RENDER FUNCTIONS ---
         function renderPortfolio(portfolio) {
             if (loadingEl) loadingEl.style.display = 'none';
             if (loadingEl2) loadingEl2.style.display = 'none';
@@ -365,6 +364,7 @@
             setTimeout(() => { addAssetModalBackdrop.classList.add('invisible'); assetForm.reset(); }, 250);
         }
 
+        // --- MODIFIED SHOW DETAILS MODAL (Now includes Chart Container) ---
         function showAssetDetails(asset) {
             assetDetailsNameEl.textContent = asset.name;
             let sym = "$";
@@ -372,6 +372,11 @@
             if (asset.currency === "SGD") sym = "S$";
             assetDetailsContentEl.innerHTML = `
                 <div class="space-y-4">
+                    <div class="bg-gray-800 border border-gray-700 p-2 rounded w-full h-48 flex items-center justify-center relative shadow-inner">
+                        <span id="chart-loading" class="text-gray-400 text-sm animate-pulse">Loading 3-month chart...</span>
+                        <canvas id="assetChart" class="hidden absolute inset-0 w-full h-full p-2"></canvas>
+                    </div>
+
                     <div class="grid grid-cols-2 gap-4">
                         <div class="bg-gray-700 p-3 rounded"><p class="text-xs text-gray-400">Current Price</p><p class="text-xl font-bold text-white">${sym}${asset.currentPrice.toFixed(2)}</p></div>
                         <div class="bg-gray-700 p-3 rounded"><p class="text-xs text-gray-400">Avg Buy Price</p><p class="text-xl font-bold text-white">${sym}${asset.avgPrice.toFixed(2)}</p></div>
@@ -384,15 +389,96 @@
                     </div>
                 </div>
             `;
+            
             assetDetailsModalBackdrop.classList.remove('invisible', 'opacity-0');
             assetDetailsModal.classList.remove('-translate-y-10', 'scale-95');
             assetDetailsModal.classList.add('translate-y-0', 'scale-100');
+
+            // NEW: Tell JS to load and draw the chart!
+            fetchAndRenderChart(asset.name);
         }
+
         function hideAssetDetailsModal() {
             assetDetailsModal.classList.add('-translate-y-10', 'scale-95');
             assetDetailsModal.classList.remove('translate-y-0', 'scale-100');
             assetDetailsModalBackdrop.classList.add('opacity-0');
+            
+            // Clean up old chart memory
+            if (currentChart) {
+                currentChart.destroy();
+                currentChart = null;
+            }
             setTimeout(() => { assetDetailsModalBackdrop.classList.add('invisible'); }, 250);
+        }
+
+        // --- NEW DATA FETCH AND RENDER LOGIC FOR CHART ---
+        async function fetchAndRenderChart(symbol) {
+            try {
+                // Reach out to our new Backend endpoint
+                const res = await fetch(`${BACKEND_URL}/api/history/${symbol}`);
+                const data = await res.json();
+                
+                if (!data.chart || !data.chart.result) throw new Error("No chart data");
+                
+                // Unpack Yahoo's complex JSON
+                const result = data.chart.result[0];
+                const timestamps = result.timestamp;
+                const closePrices = result.indicators.quote[0].close;
+
+                // Format X-axis Dates
+                const labels = timestamps.map(ts => {
+                    const d = new Date(ts * 1000);
+                    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                });
+
+                document.getElementById('chart-loading').classList.add('hidden');
+                const canvas = document.getElementById('assetChart');
+                canvas.classList.remove('hidden');
+                const ctx = canvas.getContext('2d');
+
+                // Determine trend color (Green for up, Red for down)
+                let startPrice = closePrices.find(p => p !== null) || 0;
+                let endPrice = closePrices.slice().reverse().find(p => p !== null) || 0;
+                const isUp = endPrice >= startPrice;
+                const lineColor = isUp ? '#22c55e' : '#ef4444'; 
+                const bgColor = isUp ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)';
+
+                currentChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            data: closePrices,
+                            borderColor: lineColor,
+                            backgroundColor: bgColor,
+                            borderWidth: 2,
+                            pointRadius: 0,
+                            pointHoverRadius: 5,
+                            fill: true,
+                            tension: 0.1,
+                            spanGaps: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            x: { display: false }, // Hide bottom text to save space
+                            y: { 
+                                display: true,
+                                position: 'right',
+                                grid: { color: 'rgba(75, 85, 99, 0.2)', drawBorder: false },
+                                ticks: { color: '#9ca3af', font: {size: 10}, maxTicksLimit: 5 }
+                            }
+                        },
+                        interaction: { mode: 'index', intersect: false }
+                    }
+                });
+            } catch (error) {
+                console.error("Chart error:", error);
+                document.getElementById('chart-loading').innerText = "Chart unavailable";
+            }
         }
     </script>
 </head>
@@ -409,11 +495,11 @@
                 <h2 class="text-2xl font-semibold text-white mb-6 text-center">Login</h2>
                 <div class="mb-4">
                     <label class="block text-sm font-medium text-gray-400 mb-2">Username</label>
-                    <input type="text" id="login-username" required class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="your_username">
+                    <input type="text" id="login-username" required class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="your username">
                 </div>
                 <div class="mb-6">
                     <label class="block text-sm font-medium text-gray-400 mb-2">Password</label>
-                    <input type="password" id="login-password" required class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Any password works!">
+                    <input type="password" id="login-password" required class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="password">
                 </div>
                 <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-5 rounded-lg shadow-md transition-all duration-200">Sign In</button>
             </form>
@@ -422,7 +508,7 @@
                  <h2 class="text-2xl font-semibold text-white mb-6 text-center">Create Account</h2>
                  <div class="mb-4">
                     <label class="block text-sm font-medium text-gray-400 mb-2">Username</label>
-                    <input type="text" id="signup-username" class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="create_a_username">
+                    <input type="text" id="signup-username" class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="create a username">
                 </div>
                 <div class="mb-6">
                     <label class="block text-sm font-medium text-gray-400 mb-2">Password</label>
@@ -435,10 +521,10 @@
 
     <div id="app-view" class="container mx-auto max-w-7xl p-4 md:p-8 hidden">
         <header class="mb-8 flex justify-between items-center">
-            <div><h1 class="text-3xl font-bold text-white">My Portfolio</h1></div>
+            <div><h1 class="text-3xl font-bold text-white">Portfolio</h1></div>
             <div class="flex items-center gap-4">
                 <select id="currency-selector" class="bg-gray-800 text-white border border-gray-600 rounded px-3 py-2 focus:outline-none shadow-sm">
-                    <option value="INR">INR (₹)</option><option value="USD">USD ($)</option><option value="SGD">SGD (S$)</option>
+                    <option value="INR">INR</option><option value="USD">USD</option><option value="SGD">SGD </option>
                 </select>
                 <button id="refresh-prices-btn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-lg">Refresh Prices</button>
                 <div class="relative">

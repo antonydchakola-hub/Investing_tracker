@@ -233,6 +233,28 @@ func main() {
 		c.JSON(200, gin.H{"message": "Deleted"})
 	})
 
+	// --- NEW: GET /api/history/:symbol (Fetch 3-Month Chart Data) ---
+	r.GET("/api/history/:symbol", func(c *gin.Context) {
+		symbol := c.Param("symbol")
+		// Scrape a 3-month history
+		url := fmt.Sprintf("https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=1d&range=3mo", symbol)
+		req, _ := http.NewRequest("GET", url, nil)
+		req.Header.Set("User-Agent", "Mozilla/5.0")
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Do(req)
+		
+		if err != nil || resp.StatusCode != 200 {
+			c.JSON(500, gin.H{"error": "Failed to fetch chart"})
+			return
+		}
+		defer resp.Body.Close()
+
+		// Pass the raw JSON straight to the frontend
+		var data map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&data)
+		c.JSON(200, data)
+	})
+
 	// GLOBAL PRICE UPDATE (Updates everyone's stocks at once)
 	r.POST("/api/update-prices", func(c *gin.Context) {
 		rows, _ := dbPool.Query(context.Background(), "SELECT DISTINCT name FROM assets")
@@ -266,8 +288,8 @@ func main() {
 		c.JSON(200, gin.H{"USD": 1.0, "INR": inr, "SGD": sgd})
 	})
 
-	// SELF PING (Replace URL with yours)
-	url := "https://YOUR-APP-NAME.onrender.com/api/rates"
+	// SELF PING 
+	url := "https://investing-tracker.onrender.com/api/rates"
 	go func() {
 		time.Sleep(1 * time.Minute)
 		ticker := time.NewTicker(10 * time.Minute)
