@@ -21,7 +21,8 @@
         let currentUsername = null;
         let exchangeRates = { USD: 1, INR: 83, SGD: 1.35 };
         let selectedCurrency = "INR";
-        let currentChart = null; // NEW: Keeps track of the drawing canvas
+        let currentChart = null; 
+        let currentAssetSymbol = null; // NEW: Remembers which stock is open
 
         // --- DOM Elements ---
         let loginView, appView, portfolioBody, portfolioByTypeBody, totalValueEl, totalGainLossEl, totalInvestedEl, todayGainLossEl, loadingEl, loadingEl2;
@@ -43,7 +44,6 @@
         document.head.appendChild(styleSheet);
 
         document.addEventListener('DOMContentLoaded', () => {
-            // Bind Elements
             loginView = document.getElementById('login-view');
             appView = document.getElementById('app-view');
             portfolioBody = document.getElementById('portfolio-body');
@@ -81,7 +81,6 @@
 
             setupEventListeners();
             
-            // Check Session
             const storedId = sessionStorage.getItem('userId');
             const storedName = sessionStorage.getItem('username');
             if (storedId && storedName) {
@@ -127,7 +126,6 @@
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error);
 
-                // Success
                 currentUserId = data.userId;
                 currentUsername = data.username;
                 sessionStorage.setItem('userId', currentUserId);
@@ -252,6 +250,20 @@
             refreshPricesBtn.disabled = false;
         }
 
+        function formatMoney(amount, currency, type = 'Stock') {
+            const locale = currency === 'INR' ? 'en-IN' : 'en-US';
+            const decimals = type === 'Crypto' ? 6 : 3; 
+            
+            return new Intl.NumberFormat(locale, { 
+                style: 'currency', 
+                currency: currency, 
+                minimumFractionDigits: decimals,
+                maximumFractionDigits: decimals 
+            }).format(amount);
+        }
+
+        function getColorClass(val) { return val >= 0 ? 'text-green-500' : 'text-red-500'; }
+
         // --- RENDER FUNCTIONS ---
         function renderPortfolio(portfolio) {
             if (loadingEl) loadingEl.style.display = 'none';
@@ -305,10 +317,10 @@
                     row.innerHTML = `
                         <td class="px-6 py-4 whitespace-nowrap"><div class="text-sm font-medium text-white">${asset.name}</div></td>
                         <td class="px-6 py-4 whitespace-nowrap"><span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${asset.type === 'Stock' ? 'bg-blue-900 text-blue-200' : 'bg-purple-900 text-purple-200'}">${asset.type}</span></td>
-                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-300">${formatMoney(asset.nativeInvested, asset.assetCcy)}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold text-white">${formatMoney(asset.nativeCurrent, asset.assetCcy)}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-300">${formatMoney(asset.nativeInvested, asset.assetCcy, asset.type)}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold text-white">${formatMoney(asset.nativeCurrent, asset.assetCcy, asset.type)}</td>
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold ${getColorClass(asset.nativeGain)}">
-                            <div>${formatMoney(asset.nativeGain, asset.assetCcy)}</div>
+                            <div>${formatMoney(asset.nativeGain, asset.assetCcy, asset.type)}</div>
                             <div class="text-xs">(${nativeGainPct.toFixed(2)}%)</div>
                         </td>
                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-300">${asset.quantity}</td>
@@ -335,10 +347,10 @@
                 row.innerHTML = `
                     <td class="px-6 py-4 whitespace-nowrap"><div class="text-sm font-medium text-white">${summary.type}s</div></td>
                     <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-300">${summary.count}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-300">${formatMoney(summary.totalInv, selectedCurrency)}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold text-white">${formatMoney(summary.totalCurr, selectedCurrency)}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-300">${formatMoney(summary.totalInv, selectedCurrency, summary.type)}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold text-white">${formatMoney(summary.totalCurr, selectedCurrency, summary.type)}</td>
                     <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold ${getColorClass(summary.totalGain)}">
-                        <div>${formatMoney(summary.totalGain, selectedCurrency)}</div>
+                        <div>${formatMoney(summary.totalGain, selectedCurrency, summary.type)}</div>
                         <div class="text-xs">(${gainPct.toFixed(2)}%)</div>
                     </td>
                 `;
@@ -346,12 +358,7 @@
             });
         }
 
-        function formatMoney(amount, currency) {
-            const locale = currency === 'INR' ? 'en-IN' : 'en-US';
-            return new Intl.NumberFormat(locale, { style: 'currency', currency: currency, maximumFractionDigits: 2 }).format(amount);
-        }
-        function getColorClass(val) { return val >= 0 ? 'text-green-500' : 'text-red-500'; }
-
+        // --- MODALS ---
         function showAddAssetModal() {
             addAssetModalBackdrop.classList.remove('invisible', 'opacity-0');
             addAssetModal.classList.remove('-translate-y-10', 'scale-95');
@@ -364,22 +371,64 @@
             setTimeout(() => { addAssetModalBackdrop.classList.add('invisible'); assetForm.reset(); }, 250);
         }
 
-        // --- MODIFIED SHOW DETAILS MODAL (Now includes Chart Container) ---
+        // --- NEW: Handle Timeframe Button Clicks ---
+        window.changeChartRange = function(range) {
+            const buttons = document.querySelectorAll('.timeframe-btn');
+            const ranges = ['1wk', '1mo', '3mo', '1y', 'max'];
+            
+            // Update the CSS classes so the selected button turns Indigo (Blue)
+            buttons.forEach((btn, index) => {
+                if (ranges[index] === range) {
+                    btn.className = "timeframe-btn text-xs px-3 py-1 rounded bg-indigo-600 text-white shadow transition";
+                } else {
+                    btn.className = "timeframe-btn text-xs px-3 py-1 rounded bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white transition";
+                }
+            });
+
+            // Wipe out the old canvas chart to prevent glitching overlays
+            if (currentChart) {
+                currentChart.destroy();
+                currentChart = null;
+            }
+            
+            // Show loading animation
+            document.getElementById('assetChart').classList.add('hidden');
+            document.getElementById('chart-loading').classList.remove('hidden');
+            document.getElementById('chart-loading').innerText = "Loading chart...";
+
+            // Fetch new data!
+            fetchAndRenderChart(currentAssetSymbol, range);
+        };
+
         function showAssetDetails(asset) {
+            currentAssetSymbol = asset.name; // Remember the symbol so the buttons work
             assetDetailsNameEl.textContent = asset.name;
+            
             let sym = "$";
             if (asset.currency === "INR") sym = "₹";
             if (asset.currency === "SGD") sym = "S$";
+            
             assetDetailsContentEl.innerHTML = `
                 <div class="space-y-4">
-                    <div class="bg-gray-800 border border-gray-700 p-2 rounded w-full h-48 flex items-center justify-center relative shadow-inner">
-                        <span id="chart-loading" class="text-gray-400 text-sm animate-pulse">Loading 3-month chart...</span>
-                        <canvas id="assetChart" class="hidden absolute inset-0 w-full h-full p-2"></canvas>
+                    <div class="bg-gray-800 border border-gray-700 rounded shadow-inner p-2 pb-4">
+                        
+                        <div class="flex justify-center gap-2 mb-3 mt-1" id="chart-buttons">
+                            <button onclick="changeChartRange('1wk')" class="timeframe-btn text-xs px-3 py-1 rounded bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white transition">1W</button>
+                            <button onclick="changeChartRange('1mo')" class="timeframe-btn text-xs px-3 py-1 rounded bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white transition">1M</button>
+                            <button onclick="changeChartRange('3mo')" class="timeframe-btn text-xs px-3 py-1 rounded bg-indigo-600 text-white shadow transition">3M</button>
+                            <button onclick="changeChartRange('1y')" class="timeframe-btn text-xs px-3 py-1 rounded bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white transition">1Y</button>
+                            <button onclick="changeChartRange('max')" class="timeframe-btn text-xs px-3 py-1 rounded bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white transition">ALL</button>
+                        </div>
+
+                        <div class="w-full h-40 relative flex items-center justify-center">
+                            <span id="chart-loading" class="text-gray-400 text-sm animate-pulse">Loading 3-month chart...</span>
+                            <canvas id="assetChart" class="hidden absolute inset-0 w-full h-full"></canvas>
+                        </div>
                     </div>
 
                     <div class="grid grid-cols-2 gap-4">
-                        <div class="bg-gray-700 p-3 rounded"><p class="text-xs text-gray-400">Current Price</p><p class="text-xl font-bold text-white">${sym}${asset.currentPrice.toFixed(2)}</p></div>
-                        <div class="bg-gray-700 p-3 rounded"><p class="text-xs text-gray-400">Avg Buy Price</p><p class="text-xl font-bold text-white">${sym}${asset.avgPrice.toFixed(2)}</p></div>
+                        <div class="bg-gray-700 p-3 rounded"><p class="text-xs text-gray-400">Current Price</p><p class="text-xl font-bold text-white">${formatMoney(asset.currentPrice, asset.currency, asset.type)}</p></div>
+                        <div class="bg-gray-700 p-3 rounded"><p class="text-xs text-gray-400">Avg Buy Price</p><p class="text-xl font-bold text-white">${formatMoney(asset.avgPrice, asset.currency, asset.type)}</p></div>
                     </div>
                     <div class="p-3 border border-gray-600 rounded"><p class="text-xs text-gray-400">Quantity</p><p class="text-lg text-white">${asset.quantity}</p></div>
                     <div class="pt-4 border-t border-gray-700">
@@ -394,8 +443,8 @@
             assetDetailsModal.classList.remove('-translate-y-10', 'scale-95');
             assetDetailsModal.classList.add('translate-y-0', 'scale-100');
 
-            // NEW: Tell JS to load and draw the chart!
-            fetchAndRenderChart(asset.name);
+            // Default load is 3mo
+            fetchAndRenderChart(asset.name, '3mo');
         }
 
         function hideAssetDetailsModal() {
@@ -403,7 +452,6 @@
             assetDetailsModal.classList.remove('translate-y-0', 'scale-100');
             assetDetailsModalBackdrop.classList.add('opacity-0');
             
-            // Clean up old chart memory
             if (currentChart) {
                 currentChart.destroy();
                 currentChart = null;
@@ -411,24 +459,29 @@
             setTimeout(() => { assetDetailsModalBackdrop.classList.add('invisible'); }, 250);
         }
 
-        // --- NEW DATA FETCH AND RENDER LOGIC FOR CHART ---
-        async function fetchAndRenderChart(symbol) {
+        // --- CHART DRAWING LOGIC (Now accepts range) ---
+        async function fetchAndRenderChart(symbol, range = '3mo') {
             try {
-                // Reach out to our new Backend endpoint
-                const res = await fetch(`${BACKEND_URL}/api/history/${symbol}`);
+                // Backend now reads the '?range=1y' query!
+                const res = await fetch(`${BACKEND_URL}/api/history/${symbol}?range=${range}`);
                 const data = await res.json();
                 
                 if (!data.chart || !data.chart.result) throw new Error("No chart data");
                 
-                // Unpack Yahoo's complex JSON
                 const result = data.chart.result[0];
                 const timestamps = result.timestamp;
                 const closePrices = result.indicators.quote[0].close;
 
-                // Format X-axis Dates
+                // Smartly format dates based on how far we zoomed out
                 const labels = timestamps.map(ts => {
                     const d = new Date(ts * 1000);
-                    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                    if (range === 'max' || range === '1y') {
+                        return d.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+                    } else if (range === '1wk') {
+                        return d.toLocaleDateString(undefined, { weekday: 'short' });
+                    } else {
+                        return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                    }
                 });
 
                 document.getElementById('chart-loading').classList.add('hidden');
@@ -436,7 +489,6 @@
                 canvas.classList.remove('hidden');
                 const ctx = canvas.getContext('2d');
 
-                // Determine trend color (Green for up, Red for down)
                 let startPrice = closePrices.find(p => p !== null) || 0;
                 let endPrice = closePrices.slice().reverse().find(p => p !== null) || 0;
                 const isUp = endPrice >= startPrice;
@@ -464,7 +516,7 @@
                         maintainAspectRatio: false,
                         plugins: { legend: { display: false } },
                         scales: {
-                            x: { display: false }, // Hide bottom text to save space
+                            x: { display: false }, 
                             y: { 
                                 display: true,
                                 position: 'right',

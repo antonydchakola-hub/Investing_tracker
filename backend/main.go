@@ -28,7 +28,7 @@ type User struct {
 
 type Asset struct {
 	ID            int     `json:"id"`
-	UserID        int     `json:"userId"` // Links asset to a user
+	UserID        int     `json:"userId"` // Links asset to a specific user account
 	Name          string  `json:"name"`
 	Type          string  `json:"type"`
 	Quantity      float64 `json:"quantity"`
@@ -51,22 +51,30 @@ type YahooResponse struct {
 }
 
 func main() {
-	// 1. Load Env & Connect DB
-	godotenv.Load()
-	connStr := os.Getenv("DB_URL")
-	if connStr == "" {
-		log.Fatal("DB_URL not found")
+	// 1. Load Environment Variables
+	err := godotenv.Load()
+	if err != nil {
+		log.Println("Warning: No .env file found (this is fine on Render).")
 	}
 
+	connStr := os.Getenv("DB_URL")
+	if connStr == "" {
+		log.Fatal("DB_URL not found in environment variables")
+	}
+
+	// 2. Connect to Database (Using Pool for concurrency)
 	dbPool, err := pgxpool.New(context.Background(), connStr)
 	if err != nil {
-		log.Fatal("DB Connection failed:", err)
+		log.Fatal("Unable to connect to database: ", err)
 	}
 	defer dbPool.Close()
 
+	fmt.Println("Successfully connected to Supabase (Multi-User Mode)!")
+
+	// 3. Setup Router
 	r := gin.Default()
 
-	// 2. CORS: Allow Frontend to send "X-User-ID" header
+	// CORS Setup (Allow Frontend to talk to Backend, including custom Auth headers)
 	r.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, DELETE")
@@ -78,38 +86,42 @@ func main() {
 		c.Next()
 	})
 
-	// --- AUTH ROUTES ---
+	// --- AUTHENTICATION ROUTES ---
 
-	// POST /api/register
+	// POST /api/register - Creates a new user
 	r.POST("/api/register", func(c *gin.Context) {
 		var u User
 		if err := c.ShouldBindJSON(&u); err != nil {
-			c.JSON(400, gin.H{"error": "Invalid input"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 			return
 		}
 
-		// Encrypt password (bcrypt handles any string, even "123")
-		hashedPwd, _ := bcrypt.GenerateFromPassword([]byte(u.Password), bcrypt.DefaultCost)
+		// Encrypt password using bcrypt
+		hashedPwd, err := bcrypt.GenerateFromPassword([]byte(u.Password), bcrypt.DefaultCost)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encrypt password"})
+			return
+		}
 
 		var newID int
 		// Insert into Users table
-		err := dbPool.QueryRow(context.Background(),
+		err = dbPool.QueryRow(context.Background(),
 			"INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id",
 			u.Username, string(hashedPwd)).Scan(&newID)
 
 		if err != nil {
-			c.JSON(500, gin.H{"error": "Username likely taken"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Username is likely already taken"})
 			return
 		}
 
-		c.JSON(200, gin.H{"message": "User created", "userId": newID, "username": u.Username})
+		c.JSON(http.StatusOK, gin.H{"message": "User created", "userId": newID, "username": u.Username})
 	})
 
-	// POST /api/login
+	// POST /api/login - Authenticates an existing user
 	r.POST("/api/login", func(c *gin.Context) {
 		var u User
 		if err := c.ShouldBindJSON(&u); err != nil {
-			c.JSON(400, gin.H{"error": "Invalid input"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
 			return
 		}
 
@@ -121,35 +133,35 @@ func main() {
 			"SELECT id, password_hash FROM users WHERE username=$1", u.Username).Scan(&dbID, &dbHash)
 
 		if err == pgx.ErrNoRows {
-			c.JSON(401, gin.H{"error": "User not found"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
 			return
 		}
 
-		// Compare the "123" input with the encrypted hash in DB
+		// Compare the input password with the encrypted hash in DB
 		err = bcrypt.CompareHashAndPassword([]byte(dbHash), []byte(u.Password))
 		if err != nil {
-			c.JSON(401, gin.H{"error": "Wrong password"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Wrong password"})
 			return
 		}
 
-		c.JSON(200, gin.H{"message": "Login successful", "userId": dbID, "username": u.Username})
+		c.JSON(http.StatusOK, gin.H{"message": "Login successful", "userId": dbID, "username": u.Username})
 	})
 
-	// --- ASSET ROUTES (Protected) ---
+	// --- ASSET ROUTES (Protected by X-User-ID) ---
 
-	// POST /api/assets (Add or Merge)
+	// POST /api/assets - Add a new asset or Merge with existing
 	r.POST("/api/assets", func(c *gin.Context) {
-		// Identify User
+		// Identify User from Headers
 		userIDStr := c.GetHeader("X-User-ID")
 		if userIDStr == "" {
-			c.JSON(401, gin.H{"error": "Unauthorized"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized. Please log in."})
 			return
 		}
 		userID, _ := strconv.Atoi(userIDStr)
 
 		var input Asset
 		if err := c.ShouldBindJSON(&input); err != nil {
-			c.JSON(400, gin.H{"error": err.Error()})
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
@@ -157,12 +169,12 @@ func main() {
 		var existingQty float64
 		var existingAvgPrice float64
 
-		// Check if asset exists FOR THIS USER ONLY
+		// Check if asset already exists FOR THIS SPECIFIC USER
 		queryCheck := `SELECT id, COALESCE(quantity, 0), COALESCE(avg_price, 0) FROM assets WHERE name=$1 AND user_id=$2 LIMIT 1`
 		err := dbPool.QueryRow(context.Background(), queryCheck, input.Name, userID).Scan(&existingID, &existingQty, &existingAvgPrice)
 
 		if err == pgx.ErrNoRows {
-			// New Asset
+			// New Asset Logic: Determine Currency
 			currency := "USD"
 			if strings.HasSuffix(input.Name, ".NS") || strings.HasSuffix(input.Name, ".BO") {
 				currency = "INR"
@@ -174,37 +186,45 @@ func main() {
 			_, err := dbPool.Exec(context.Background(), insertQ, userID, input.Name, input.Type, input.Quantity, input.AvgPrice, currency)
 
 			if err != nil {
-				c.JSON(500, gin.H{"error": "Failed to insert"})
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to insert asset"})
 				return
 			}
-			c.JSON(200, gin.H{"message": "Asset saved!"})
+			c.JSON(http.StatusOK, gin.H{"message": "Asset saved!"})
 
 		} else {
-			// Merge Asset
+			// Merge Asset Logic: Calculate new weighted average
 			newTotalQty := existingQty + input.Quantity
 			var newAvgPrice float64
 			if newTotalQty > 0 {
 				newAvgPrice = ((existingQty * existingAvgPrice) + (input.Quantity * input.AvgPrice)) / newTotalQty
 			}
 			_, err = dbPool.Exec(context.Background(), "UPDATE assets SET quantity=$1, avg_price=$2 WHERE id=$3", newTotalQty, newAvgPrice, existingID)
-			c.JSON(200, gin.H{"message": "Asset merged!"})
+			
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to merge asset"})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "Asset merged!"})
 		}
 	})
 
-	// GET /api/assets (Fetch My Assets)
+	// GET /api/assets - Fetch all assets for the logged-in user
 	r.GET("/api/assets", func(c *gin.Context) {
 		userIDStr := c.GetHeader("X-User-ID")
 		if userIDStr == "" {
-			c.JSON(401, gin.H{"error": "Unauthorized"})
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 			return
 		}
 		userID, _ := strconv.Atoi(userIDStr)
 
-		// Select only assets belonging to userID
-		query := `SELECT id, name, asset_type, quantity, avg_price, current_price, previous_close, currency FROM assets WHERE user_id=$1 ORDER BY (current_price * quantity) DESC`
+		// Select only assets belonging to this specific user
+		query := `
+			SELECT id, name, asset_type, quantity, avg_price, current_price, previous_close, currency 
+			FROM assets WHERE user_id=$1 ORDER BY (current_price * quantity) DESC`
+		
 		rows, err := dbPool.Query(context.Background(), query, userID)
 		if err != nil {
-			c.JSON(500, gin.H{"error": "Query failed"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Query failed"})
 			return
 		}
 		defer rows.Close()
@@ -215,36 +235,47 @@ func main() {
 			rows.Scan(&a.ID, &a.Name, &a.Type, &a.Quantity, &a.AvgPrice, &a.CurrentPrice, &a.PreviousClose, &a.Currency)
 			assets = append(assets, a)
 		}
-		c.JSON(200, assets)
+		c.JSON(http.StatusOK, assets)
 	})
 
-	// DELETE /api/assets/:id
+	// DELETE /api/assets/:id - Remove an asset safely
 	r.DELETE("/api/assets/:id", func(c *gin.Context) {
 		userIDStr := c.GetHeader("X-User-ID")
 		id := c.Param("id")
 		userID, _ := strconv.Atoi(userIDStr)
 
-		// Secure Delete: Ensure ID matches AND User matches
+		// Secure Delete: Ensure ID matches AND User matches so people can't delete other people's stocks
 		res, err := dbPool.Exec(context.Background(), "DELETE FROM assets WHERE id=$1 AND user_id=$2", id, userID)
 		if err != nil || res.RowsAffected() == 0 {
-			c.JSON(500, gin.H{"error": "Failed to delete"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete or unauthorized"})
 			return
 		}
-		c.JSON(200, gin.H{"message": "Deleted"})
+		c.JSON(http.StatusOK, gin.H{"message": "Asset deleted"})
 	})
 
-	// --- NEW: GET /api/history/:symbol (Fetch 3-Month Chart Data) ---
+	// --- CHART & MARKET DATA ROUTES ---
+
+	// GET /api/history/:symbol - Fetch historical charting data with dynamic timeframes
 	r.GET("/api/history/:symbol", func(c *gin.Context) {
 		symbol := c.Param("symbol")
-		// Scrape a 3-month history
-		url := fmt.Sprintf("https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=1d&range=3mo", symbol)
+		rng := c.DefaultQuery("range", "3mo") // Default to 3 months if not provided
+
+		// Protect the payload size. If they want 'max' or '1y', give them monthly/weekly points, not daily.
+		interval := "1d"
+		if rng == "max" {
+			interval = "1mo"
+		} else if rng == "1y" {
+			interval = "1wk"
+		}
+
+		url := fmt.Sprintf("https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=%s&range=%s", symbol, interval, rng)
 		req, _ := http.NewRequest("GET", url, nil)
 		req.Header.Set("User-Agent", "Mozilla/5.0")
 		client := &http.Client{Timeout: 5 * time.Second}
 		resp, err := client.Do(req)
-		
+
 		if err != nil || resp.StatusCode != 200 {
-			c.JSON(500, gin.H{"error": "Failed to fetch chart"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch chart data from Yahoo"})
 			return
 		}
 		defer resp.Body.Close()
@@ -252,11 +283,12 @@ func main() {
 		// Pass the raw JSON straight to the frontend
 		var data map[string]interface{}
 		json.NewDecoder(resp.Body).Decode(&data)
-		c.JSON(200, data)
+		c.JSON(http.StatusOK, data)
 	})
 
-	// GLOBAL PRICE UPDATE (Updates everyone's stocks at once)
+	// POST /api/update-prices - Global Price Updater (Scraper)
 	r.POST("/api/update-prices", func(c *gin.Context) {
+		// Get unique names to avoid requesting the same stock twice
 		rows, _ := dbPool.Query(context.Background(), "SELECT DISTINCT name FROM assets")
 		var names []string
 		for rows.Next() {
@@ -269,26 +301,29 @@ func main() {
 		for _, symbol := range names {
 			price, prevClose, currency, err := fetchLivePriceExtended(symbol)
 			if err == nil {
+				// Update all assets matching this symbol across ALL users
 				dbPool.Exec(context.Background(), "UPDATE assets SET current_price=$1, previous_close=$2, currency=$3 WHERE name=$4", price, prevClose, currency, symbol)
 			}
 		}
-		c.JSON(200, gin.H{"message": "Prices updated"})
+		c.JSON(http.StatusOK, gin.H{"message": "Prices updated"})
 	})
 
-	// PUBLIC RATES
+	// GET /api/rates - Public Exchange Rates
 	r.GET("/api/rates", func(c *gin.Context) {
 		inr, _, _, _ := fetchLivePriceExtended("INR=X")
 		sgd, _, _, _ := fetchLivePriceExtended("SGD=X")
+		
+		// Fallbacks if Yahoo blocks the request
 		if inr == 0 {
 			inr = 87.0
 		}
 		if sgd == 0 {
 			sgd = 1.36
 		}
-		c.JSON(200, gin.H{"USD": 1.0, "INR": inr, "SGD": sgd})
+		c.JSON(http.StatusOK, gin.H{"USD": 1.0, "INR": inr, "SGD": sgd})
 	})
 
-	// SELF PING 
+	// --- KEEP-ALIVE (SELF PING) ---
 	url := "https://investing-tracker.onrender.com/api/rates"
 	go func() {
 		time.Sleep(1 * time.Minute)
@@ -298,29 +333,39 @@ func main() {
 		}
 	}()
 
+	// Start Server
 	r.Run(":8080")
 }
+
+// --- HELPER FUNCTIONS ---
 
 func fetchLivePriceExtended(symbol string) (float64, float64, string, error) {
 	url := fmt.Sprintf("https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=1d", symbol)
 	req, _ := http.NewRequest("GET", url, nil)
+	// We use a User-Agent to prevent Yahoo from blocking us as a bot
 	req.Header.Set("User-Agent", "Mozilla/5.0")
+	
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
+	
 	if err != nil {
 		return 0, 0, "", err
 	}
 	defer resp.Body.Close()
+	
 	if resp.StatusCode != 200 {
 		return 0, 0, "", fmt.Errorf("bad status")
 	}
+	
 	var data YahooResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return 0, 0, "", err
 	}
+	
 	if len(data.Chart.Result) == 0 {
-		return 0, 0, "", fmt.Errorf("no data")
+		return 0, 0, "", fmt.Errorf("no data found for symbol")
 	}
+	
 	meta := data.Chart.Result[0].Meta
 	return meta.RegularMarketPrice, meta.ChartPreviousClose, meta.Currency, nil
 }
