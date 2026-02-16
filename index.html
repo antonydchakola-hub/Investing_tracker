@@ -22,10 +22,10 @@
         let exchangeRates = { USD: 1, INR: 83, SGD: 1.35 };
         let selectedCurrency = "INR";
         let currentChart = null; 
-        let currentAssetSymbol = null; // NEW: Remembers which stock is open
+        let currentAssetSymbol = null;
 
         // --- DOM Elements ---
-        let loginView, appView, portfolioBody, portfolioByTypeBody, totalValueEl, totalGainLossEl, totalInvestedEl, todayGainLossEl, loadingEl, loadingEl2;
+        let splashScreen, authContainer, appView, portfolioBody, portfolioByTypeBody, totalValueEl, totalGainLossEl, totalInvestedEl, todayGainLossEl, loadingEl, loadingEl2;
         let addAssetBtn, addAssetModal, addAssetModalBackdrop, closeModalBtn, saveAssetBtn, assetForm;
         let profileDropdown, profileDropdownMenu, signOutBtn, loginForm, signupForm, authErrorEl, profileEmailEl;
         let currencySelector, refreshPricesBtn;
@@ -44,7 +44,8 @@
         document.head.appendChild(styleSheet);
 
         document.addEventListener('DOMContentLoaded', () => {
-            loginView = document.getElementById('login-view');
+            splashScreen = document.getElementById('splash-screen');
+            authContainer = document.getElementById('auth-container');
             appView = document.getElementById('app-view');
             portfolioBody = document.getElementById('portfolio-body');
             portfolioByTypeBody = document.getElementById('portfolio-by-type-body'); 
@@ -81,13 +82,22 @@
 
             setupEventListeners();
             
-            const storedId = sessionStorage.getItem('userId');
-            const storedName = sessionStorage.getItem('username');
-            if (storedId && storedName) {
-                currentUserId = storedId;
-                currentUsername = storedName;
-                fetchRatesAndInit();
-            }
+            // --- NEW: Splash Screen Logic (2 seconds) ---
+            setTimeout(() => {
+                splashScreen.classList.add('hidden'); // Hide splash after 2s
+                
+                const storedId = sessionStorage.getItem('userId');
+                const storedName = sessionStorage.getItem('username');
+                
+                if (storedId && storedName) {
+                    currentUserId = storedId;
+                    currentUsername = storedName;
+                    fetchRatesAndInit();
+                } else {
+                    // Show login screen if not logged in
+                    authContainer.classList.remove('hidden');
+                }
+            }, 2000);
         });
 
         function setupEventListeners() {
@@ -109,6 +119,18 @@
             assetDetailsModalBackdrop.addEventListener('click', (e) => { if (e.target === assetDetailsModalBackdrop) hideAssetDetailsModal(); });
             window.addEventListener('click', (e) => { if (!profileDropdown.contains(e.target)) profileDropdownMenu.classList.add('hidden'); });
         }
+
+        // --- NEW: Toggle between Login and Signup ---
+        window.toggleAuthView = function(view) {
+            authErrorEl.classList.add('hidden'); // Clear errors on swap
+            if (view === 'signup') {
+                document.getElementById('login-form').classList.add('hidden');
+                document.getElementById('signup-form').classList.remove('hidden');
+            } else {
+                document.getElementById('signup-form').classList.add('hidden');
+                document.getElementById('login-form').classList.remove('hidden');
+            }
+        };
 
         // --- AUTH ---
         async function handleLogin(e) {
@@ -141,8 +163,13 @@
             e.preventDefault();
             const u = document.getElementById('signup-username').value;
             const p = document.getElementById('signup-password').value;
+            authErrorEl.classList.add('hidden');
             
-            if (!p) { alert("Password cannot be empty"); return; }
+            if (!p) { 
+                authErrorEl.textContent = "Password cannot be empty"; 
+                authErrorEl.classList.remove('hidden');
+                return; 
+            }
 
             try {
                 const res = await fetch(`${BACKEND_URL}/api/register`, {
@@ -159,14 +186,15 @@
                 sessionStorage.setItem('username', currentUsername);
                 fetchRatesAndInit();
             } catch (err) {
-                alert("Signup failed: " + err.message);
+                authErrorEl.textContent = "Signup failed: " + err.message;
+                authErrorEl.classList.remove('hidden');
             }
         }
 
         function handleSignOut() {
             sessionStorage.clear();
             currentUserId = null;
-            location.reload();
+            location.reload(); // Reloading will play the splash screen again
         }
 
         // --- APP LOGIC ---
@@ -183,7 +211,7 @@
         function initializeAppView() {
             profileEmailEl.textContent = currentUsername;
             appView.classList.remove('hidden');
-            loginView.classList.add('hidden');
+            authContainer.classList.add('hidden'); // Hide auth screens
             loadPortfolio();
         }
 
@@ -371,12 +399,10 @@
             setTimeout(() => { addAssetModalBackdrop.classList.add('invisible'); assetForm.reset(); }, 250);
         }
 
-        // --- NEW: Handle Timeframe Button Clicks ---
         window.changeChartRange = function(range) {
             const buttons = document.querySelectorAll('.timeframe-btn');
             const ranges = ['1wk', '1mo', '3mo', '1y', 'max'];
             
-            // Update the CSS classes so the selected button turns Indigo (Blue)
             buttons.forEach((btn, index) => {
                 if (ranges[index] === range) {
                     btn.className = "timeframe-btn text-xs px-3 py-1 rounded bg-indigo-600 text-white shadow transition";
@@ -385,23 +411,20 @@
                 }
             });
 
-            // Wipe out the old canvas chart to prevent glitching overlays
             if (currentChart) {
                 currentChart.destroy();
                 currentChart = null;
             }
             
-            // Show loading animation
             document.getElementById('assetChart').classList.add('hidden');
             document.getElementById('chart-loading').classList.remove('hidden');
             document.getElementById('chart-loading').innerText = "Loading chart...";
 
-            // Fetch new data!
             fetchAndRenderChart(currentAssetSymbol, range);
         };
 
         function showAssetDetails(asset) {
-            currentAssetSymbol = asset.name; // Remember the symbol so the buttons work
+            currentAssetSymbol = asset.name; 
             assetDetailsNameEl.textContent = asset.name;
             
             let sym = "$";
@@ -411,7 +434,6 @@
             assetDetailsContentEl.innerHTML = `
                 <div class="space-y-4">
                     <div class="bg-gray-800 border border-gray-700 rounded shadow-inner p-2 pb-4">
-                        
                         <div class="flex justify-center gap-2 mb-3 mt-1" id="chart-buttons">
                             <button onclick="changeChartRange('1wk')" class="timeframe-btn text-xs px-3 py-1 rounded bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white transition">1W</button>
                             <button onclick="changeChartRange('1mo')" class="timeframe-btn text-xs px-3 py-1 rounded bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white transition">1M</button>
@@ -419,7 +441,6 @@
                             <button onclick="changeChartRange('1y')" class="timeframe-btn text-xs px-3 py-1 rounded bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white transition">1Y</button>
                             <button onclick="changeChartRange('max')" class="timeframe-btn text-xs px-3 py-1 rounded bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white transition">ALL</button>
                         </div>
-
                         <div class="w-full h-40 relative flex items-center justify-center">
                             <span id="chart-loading" class="text-gray-400 text-sm animate-pulse">Loading 3-month chart...</span>
                             <canvas id="assetChart" class="hidden absolute inset-0 w-full h-full"></canvas>
@@ -443,7 +464,6 @@
             assetDetailsModal.classList.remove('-translate-y-10', 'scale-95');
             assetDetailsModal.classList.add('translate-y-0', 'scale-100');
 
-            // Default load is 3mo
             fetchAndRenderChart(asset.name, '3mo');
         }
 
@@ -459,10 +479,9 @@
             setTimeout(() => { assetDetailsModalBackdrop.classList.add('invisible'); }, 250);
         }
 
-        // --- CHART DRAWING LOGIC (Now accepts range) ---
+        // --- CHART DRAWING LOGIC ---
         async function fetchAndRenderChart(symbol, range = '3mo') {
             try {
-                // Backend now reads the '?range=1y' query!
                 const res = await fetch(`${BACKEND_URL}/api/history/${symbol}?range=${range}`);
                 const data = await res.json();
                 
@@ -472,7 +491,6 @@
                 const timestamps = result.timestamp;
                 const closePrices = result.indicators.quote[0].close;
 
-                // Smartly format dates based on how far we zoomed out
                 const labels = timestamps.map(ts => {
                     const d = new Date(ts * 1000);
                     if (range === 'max' || range === '1y') {
@@ -535,16 +553,24 @@
     </script>
 </head>
 <body class="bg-gray-900 text-gray-200 antialiased">
-    <div id="login-view" class="min-h-screen flex items-center justify-center p-4">
+    
+    <div id="splash-screen" class="fixed inset-0 bg-gray-900 flex flex-col items-center justify-center z-50 transition-opacity duration-500">
+        <img src="icon.png" alt="App Logo" class="w-32 h-32 mb-4 animate-pulse shadow-lg rounded-2xl">
+        <h1 class="text-2xl font-bold tracking-widest text-indigo-400">PORTFOLIO</h1>
+    </div>
+
+    <div id="auth-container" class="min-h-screen flex flex-col items-center justify-center p-4 hidden">
         <div class="max-w-md w-full">
-            <div class="text-center mb-8">
-                <h1 class="text-4xl font-bold text-white mb-2">My Portfolio Manager</h1>
-                <p class="text-lg text-gray-400">Sign in to access your portfolio.</p>
+            <div class="text-center mb-6">
+                <img src="icon.png" alt="Logo" class="w-16 h-16 mx-auto mb-3 rounded-xl shadow">
+                <h1 class="text-3xl font-bold text-white mb-1">Welcome</h1>
+                <p class="text-md text-gray-400">Manage your investments.</p>
             </div>
+            
             <div id="auth-error" class="bg-red-800 border border-red-700 text-red-100 px-4 py-3 rounded-lg mb-6 hidden"></div>
             
             <form id="login-form" class="bg-gray-800 p-8 rounded-lg shadow-2xl mb-6">
-                <h2 class="text-2xl font-semibold text-white mb-6 text-center">Login</h2>
+                <h2 class="text-xl font-semibold text-white mb-6 text-center">Sign In</h2>
                 <div class="mb-4">
                     <label class="block text-sm font-medium text-gray-400 mb-2">Username</label>
                     <input type="text" id="login-username" required class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="your username">
@@ -553,11 +579,16 @@
                     <label class="block text-sm font-medium text-gray-400 mb-2">Password</label>
                     <input type="password" id="login-password" required class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="password">
                 </div>
-                <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-5 rounded-lg shadow-md transition-all duration-200">Sign In</button>
+                <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-5 rounded-lg shadow-md transition-all duration-200 mb-5">Sign In</button>
+                
+                <div class="text-center text-sm text-gray-400">
+                    Don't have an account? 
+                    <a href="#" onclick="toggleAuthView('signup'); return false;" class="text-indigo-400 hover:text-indigo-300 font-medium transition-colors">Create one</a>
+                </div>
             </form>
             
-            <form id="signup-form" class="bg-gray-800 p-8 rounded-lg shadow-2xl">
-                 <h2 class="text-2xl font-semibold text-white mb-6 text-center">Create Account</h2>
+            <form id="signup-form" class="bg-gray-800 p-8 rounded-lg shadow-2xl hidden mb-6">
+                 <h2 class="text-xl font-semibold text-white mb-6 text-center">Create Account</h2>
                  <div class="mb-4">
                     <label class="block text-sm font-medium text-gray-400 mb-2">Username</label>
                     <input type="text" id="signup-username" class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="create a username">
@@ -566,7 +597,12 @@
                     <label class="block text-sm font-medium text-gray-400 mb-2">Password</label>
                     <input type="password" id="signup-password" class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Password (can be simple)">
                 </div>
-                <button type="submit" class="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-5 rounded-lg shadow-md transition-all duration-200">Sign Up</button>
+                <button type="submit" class="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-5 rounded-lg shadow-md transition-all duration-200 mb-5">Sign Up</button>
+                
+                <div class="text-center text-sm text-gray-400">
+                    Already have an account? 
+                    <a href="#" onclick="toggleAuthView('login'); return false;" class="text-indigo-400 hover:text-indigo-300 font-medium transition-colors">Log in</a>
+                </div>
             </form>
         </div>
     </div>
