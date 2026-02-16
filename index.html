@@ -82,9 +82,8 @@
 
             setupEventListeners();
             
-            // --- NEW: Splash Screen Logic (2 seconds) ---
             setTimeout(() => {
-                splashScreen.classList.add('hidden'); // Hide splash after 2s
+                splashScreen.classList.add('hidden');
                 
                 const storedId = sessionStorage.getItem('userId');
                 const storedName = sessionStorage.getItem('username');
@@ -94,7 +93,6 @@
                     currentUsername = storedName;
                     fetchRatesAndInit();
                 } else {
-                    // Show login screen if not logged in
                     authContainer.classList.remove('hidden');
                 }
             }, 2000);
@@ -120,9 +118,8 @@
             window.addEventListener('click', (e) => { if (!profileDropdown.contains(e.target)) profileDropdownMenu.classList.add('hidden'); });
         }
 
-        // --- NEW: Toggle between Login and Signup ---
         window.toggleAuthView = function(view) {
-            authErrorEl.classList.add('hidden'); // Clear errors on swap
+            authErrorEl.classList.add('hidden');
             if (view === 'signup') {
                 document.getElementById('login-form').classList.add('hidden');
                 document.getElementById('signup-form').classList.remove('hidden');
@@ -194,7 +191,7 @@
         function handleSignOut() {
             sessionStorage.clear();
             currentUserId = null;
-            location.reload(); // Reloading will play the splash screen again
+            location.reload(); 
         }
 
         // --- APP LOGIC ---
@@ -211,7 +208,7 @@
         function initializeAppView() {
             profileEmailEl.textContent = currentUsername;
             appView.classList.remove('hidden');
-            authContainer.classList.add('hidden'); // Hide auth screens
+            authContainer.classList.add('hidden'); 
             loadPortfolio();
         }
 
@@ -278,15 +275,14 @@
             refreshPricesBtn.disabled = false;
         }
 
-        function formatMoney(amount, currency, type = 'Stock') {
+        function formatMoney(amount, currency) {
             const locale = currency === 'INR' ? 'en-IN' : 'en-US';
-            const decimals = type === 'Crypto' ? 6 : 3; 
             
             return new Intl.NumberFormat(locale, { 
                 style: 'currency', 
                 currency: currency, 
-                minimumFractionDigits: decimals,
-                maximumFractionDigits: decimals 
+                minimumFractionDigits: 3, 
+                maximumFractionDigits: 3  
             }).format(amount);
         }
 
@@ -343,15 +339,15 @@
                     const row = document.createElement('tr');
                     row.className = 'hover:bg-gray-700 transition-colors duration-150 cursor-pointer';
                     row.innerHTML = `
-                        <td class="px-6 py-4 whitespace-nowrap"><div class="text-sm font-medium text-white">${asset.name}</div></td>
-                        <td class="px-6 py-4 whitespace-nowrap"><span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${asset.type === 'Stock' ? 'bg-blue-900 text-blue-200' : 'bg-purple-900 text-purple-200'}">${asset.type}</span></td>
-                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-300">${formatMoney(asset.nativeInvested, asset.assetCcy, asset.type)}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold text-white">${formatMoney(asset.nativeCurrent, asset.assetCcy, asset.type)}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold ${getColorClass(asset.nativeGain)}">
-                            <div>${formatMoney(asset.nativeGain, asset.assetCcy, asset.type)}</div>
+                        <td class="px-4 md:px-6 py-4 whitespace-nowrap"><div class="text-sm font-medium text-white">${asset.name}</div></td>
+                        <td class="px-4 md:px-6 py-4 whitespace-nowrap"><span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${asset.type === 'Stock' ? 'bg-blue-900 text-blue-200' : 'bg-purple-900 text-purple-200'}">${asset.type}</span></td>
+                        <td class="px-4 md:px-6 py-4 whitespace-nowrap text-right text-sm text-gray-300">${formatMoney(asset.nativeInvested, asset.assetCcy)}</td>
+                        <td class="px-4 md:px-6 py-4 whitespace-nowrap text-right text-sm font-semibold text-white">${formatMoney(asset.nativeCurrent, asset.assetCcy)}</td>
+                        <td class="px-4 md:px-6 py-4 whitespace-nowrap text-right text-sm font-semibold ${getColorClass(asset.nativeGain)}">
+                            <div>${formatMoney(asset.nativeGain, asset.assetCcy)}</div>
                             <div class="text-xs">(${nativeGainPct.toFixed(2)}%)</div>
                         </td>
-                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-300">${asset.quantity}</td>
+                        <td class="px-4 md:px-6 py-4 whitespace-nowrap text-right text-sm text-gray-300">${asset.quantity}</td>
                     `;
                     row.addEventListener('click', () => showAssetDetails(asset));
                     portfolioBody.appendChild(row);
@@ -373,12 +369,12 @@
                 const row = document.createElement('tr');
                 row.className = 'hover:bg-gray-700 transition-colors duration-150 cursor-pointer';
                 row.innerHTML = `
-                    <td class="px-6 py-4 whitespace-nowrap"><div class="text-sm font-medium text-white">${summary.type}s</div></td>
-                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-300">${summary.count}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-300">${formatMoney(summary.totalInv, selectedCurrency, summary.type)}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold text-white">${formatMoney(summary.totalCurr, selectedCurrency, summary.type)}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold ${getColorClass(summary.totalGain)}">
-                        <div>${formatMoney(summary.totalGain, selectedCurrency, summary.type)}</div>
+                    <td class="px-4 md:px-6 py-4 whitespace-nowrap"><div class="text-sm font-medium text-white">${summary.type}s</div></td>
+                    <td class="px-4 md:px-6 py-4 whitespace-nowrap text-right text-sm text-gray-300">${summary.count}</td>
+                    <td class="px-4 md:px-6 py-4 whitespace-nowrap text-right text-sm text-gray-300">${formatMoney(summary.totalInv, selectedCurrency)}</td>
+                    <td class="px-4 md:px-6 py-4 whitespace-nowrap text-right text-sm font-semibold text-white">${formatMoney(summary.totalCurr, selectedCurrency)}</td>
+                    <td class="px-4 md:px-6 py-4 whitespace-nowrap text-right text-sm font-semibold ${getColorClass(summary.totalGain)}">
+                        <div>${formatMoney(summary.totalGain, selectedCurrency)}</div>
                         <div class="text-xs">(${gainPct.toFixed(2)}%)</div>
                     </td>
                 `;
@@ -442,14 +438,14 @@
                             <button onclick="changeChartRange('max')" class="timeframe-btn text-xs px-3 py-1 rounded bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white transition">ALL</button>
                         </div>
                         <div class="w-full h-40 relative flex items-center justify-center">
-                            <span id="chart-loading" class="text-gray-400 text-sm animate-pulse">Loading 3-month chart...</span>
+                            <span id="chart-loading" class="text-gray-400 text-sm animate-pulse">Loading chart...</span>
                             <canvas id="assetChart" class="hidden absolute inset-0 w-full h-full"></canvas>
                         </div>
                     </div>
 
                     <div class="grid grid-cols-2 gap-4">
-                        <div class="bg-gray-700 p-3 rounded"><p class="text-xs text-gray-400">Current Price</p><p class="text-xl font-bold text-white">${formatMoney(asset.currentPrice, asset.currency, asset.type)}</p></div>
-                        <div class="bg-gray-700 p-3 rounded"><p class="text-xs text-gray-400">Avg Buy Price</p><p class="text-xl font-bold text-white">${formatMoney(asset.avgPrice, asset.currency, asset.type)}</p></div>
+                        <div class="bg-gray-700 p-3 rounded"><p class="text-xs text-gray-400">Current Price</p><p class="text-xl font-bold text-white">${formatMoney(asset.currentPrice, asset.currency)}</p></div>
+                        <div class="bg-gray-700 p-3 rounded"><p class="text-xs text-gray-400">Avg Buy Price</p><p class="text-xl font-bold text-white">${formatMoney(asset.avgPrice, asset.currency)}</p></div>
                     </div>
                     <div class="p-3 border border-gray-600 rounded"><p class="text-xs text-gray-400">Quantity</p><p class="text-lg text-white">${asset.quantity}</p></div>
                     <div class="pt-4 border-t border-gray-700">
@@ -608,16 +604,16 @@
     </div>
 
     <div id="app-view" class="container mx-auto max-w-7xl p-4 md:p-8 hidden">
-        <header class="mb-8 flex justify-between items-center">
-            <div><h1 class="text-3xl font-bold text-white">Portfolio</h1></div>
-            <div class="flex items-center gap-4">
-                <select id="currency-selector" class="bg-gray-800 text-white border border-gray-600 rounded px-3 py-2 focus:outline-none shadow-sm">
+        <header class="mb-6 flex flex-wrap justify-between items-center gap-y-4 gap-x-2">
+            <div><h1 class="text-2xl md:text-3xl font-bold text-white">Portfolio</h1></div>
+            <div class="flex items-center gap-2 md:gap-4">
+                <select id="currency-selector" class="bg-gray-800 text-white border border-gray-600 rounded px-2 py-2 md:px-3 text-sm focus:outline-none shadow-sm">
                     <option value="INR">INR</option><option value="USD">USD</option><option value="SGD">SGD </option>
                 </select>
-                <button id="refresh-prices-btn" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 shadow-lg">Refresh Prices</button>
+                <button id="refresh-prices-btn" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors shadow-lg">Refresh</button>
                 <div class="relative">
-                    <button id="profile-dropdown" class="flex items-center justify-center w-12 h-12 bg-gray-700 text-gray-300 rounded-full hover:bg-gray-600 transition-colors focus:outline-none">
-                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                    <button id="profile-dropdown" class="flex items-center justify-center w-10 h-10 md:w-12 md:h-12 bg-gray-700 text-gray-300 rounded-full hover:bg-gray-600 transition-colors focus:outline-none">
+                        <svg class="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
                     </button>
                     <div id="profile-dropdown-menu" class="absolute right-0 mt-2 w-56 bg-gray-800 rounded-lg shadow-2xl border border-gray-700 z-20 hidden">
                         <div class="p-4 border-b border-gray-700"><p class="text-sm text-gray-400">Signed in as</p><p id="profile-email" class="text-sm font-medium text-white truncate">User</p></div>
@@ -634,14 +630,18 @@
         </div>
 
         <div class="bg-gray-800 rounded-lg shadow-lg overflow-hidden mb-8">
-            <div class="p-6 border-b border-gray-700 flex justify-between items-center"><h2 class="text-xl font-semibold text-white">Your Holdings (Sorted by Value)</h2><span class="text-xs text-gray-400">*Individual assets shown in native currency</span></div>
-            <div class="overflow-x-auto"><table class="min-w-full divide-y divide-gray-700"><thead class="bg-gray-800"><tr><th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Asset</th><th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Type</th><th class="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Invested Value</th><th class="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Current Value</th><th class="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Total Gain/Loss</th><th class="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Quantity</th></tr></thead><tbody id="portfolio-body" class="bg-gray-800 divide-y divide-gray-700"></tbody></table></div>
+            <div class="p-4 sm:p-6 border-b border-gray-700 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1 sm:gap-0">
+                <h2 class="text-lg sm:text-xl font-semibold text-white">Your Holdings (Sorted by Value)</h2>
+                <span class="text-xs text-gray-400">*Individual assets shown in native currency</span>
+            </div>
+            
+            <div class="overflow-x-auto"><table class="min-w-full divide-y divide-gray-700"><thead class="bg-gray-800"><tr><th class="px-4 md:px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Asset</th><th class="px-4 md:px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Type</th><th class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Invested Value</th><th class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Current Value</th><th class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Total Gain/Loss</th><th class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Quantity</th></tr></thead><tbody id="portfolio-body" class="bg-gray-800 divide-y divide-gray-700"></tbody></table></div>
             <div id="loading" class="p-6 text-center text-gray-500">Loading portfolio data...</div>
         </div>
         
         <div class="bg-gray-800 rounded-lg shadow-lg overflow-hidden">
-            <div class="p-6 border-b border-gray-700"><h2 class="text-xl font-semibold text-white">Holdings by Type</h2></div>
-            <div class="overflow-x-auto"><table class="min-w-full divide-y divide-gray-700"><thead class="bg-gray-800"><tr><th class="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Asset Type</th><th class="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Holdings</th><th class="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Invested Value</th><th class="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Current Value</th><th class="px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Total Gain/Loss</th></tr></thead><tbody id="portfolio-by-type-body" class="bg-gray-800 divide-y divide-gray-700"></tbody></table></div>
+            <div class="p-4 sm:p-6 border-b border-gray-700"><h2 class="text-lg sm:text-xl font-semibold text-white">Holdings by Type</h2></div>
+            <div class="overflow-x-auto"><table class="min-w-full divide-y divide-gray-700"><thead class="bg-gray-800"><tr><th class="px-4 md:px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Asset Type</th><th class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Holdings</th><th class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Invested Value</th><th class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Current Value</th><th class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Total Gain/Loss</th></tr></thead><tbody id="portfolio-by-type-body" class="bg-gray-800 divide-y divide-gray-700"></tbody></table></div>
             <div id="loading-2" class="p-6 text-center text-gray-500">Loading portfolio data...</div>
         </div>
         
