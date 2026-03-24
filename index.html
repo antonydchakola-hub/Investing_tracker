@@ -281,7 +281,7 @@
             return new Intl.NumberFormat(locale, { 
                 style: 'currency', 
                 currency: currency, 
-                minimumFractionDigits: 3, 
+                minimumFractionDigits: 2, 
                 maximumFractionDigits: 3  
             }).format(amount);
         }
@@ -631,7 +631,7 @@
 
         <div class="bg-gray-800 rounded-lg shadow-lg overflow-hidden mb-8">
             <div class="p-4 sm:p-6 border-b border-gray-700 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1 sm:gap-0">
-                <h2 class="text-lg sm:text-xl font-semibold text-white">Your Holdings (Sorted by Value)</h2>
+                <h2 class="text-lg sm:text-xl font-semibold text-white">Your Holdings</h2>
                 <span class="text-xs text-gray-400">*Individual assets shown in native currency</span>
             </div>
             

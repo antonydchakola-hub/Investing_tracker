@@ -199,7 +199,7 @@ func main() {
 				newAvgPrice = ((existingQty * existingAvgPrice) + (input.Quantity * input.AvgPrice)) / newTotalQty
 			}
 			_, err = dbPool.Exec(context.Background(), "UPDATE assets SET quantity=$1, avg_price=$2 WHERE id=$3", newTotalQty, newAvgPrice, existingID)
-			
+
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to merge asset"})
 				return
@@ -221,7 +221,7 @@ func main() {
 		query := `
 			SELECT id, name, asset_type, quantity, avg_price, current_price, previous_close, currency 
 			FROM assets WHERE user_id=$1 ORDER BY (current_price * quantity) DESC`
-		
+
 		rows, err := dbPool.Query(context.Background(), query, userID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Query failed"})
@@ -312,7 +312,7 @@ func main() {
 	r.GET("/api/rates", func(c *gin.Context) {
 		inr, _, _, _ := fetchLivePriceExtended("INR=X")
 		sgd, _, _, _ := fetchLivePriceExtended("SGD=X")
-		
+
 		// Fallbacks if Yahoo blocks the request
 		if inr == 0 {
 			inr = 87.0
@@ -323,13 +323,17 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"USD": 1.0, "INR": inr, "SGD": sgd})
 	})
 
-	// --- KEEP-ALIVE (SELF PING) ---
+	// --- KEEP-ALIVE (RENDER + SUPABASE) ---
 	url := "https://investing-tracker.onrender.com/api/rates"
 	go func() {
 		time.Sleep(1 * time.Minute)
 		ticker := time.NewTicker(10 * time.Minute)
 		for range ticker.C {
+			// 1. Ping Render to keep the web server awake
 			http.Get(url)
+
+			// 2. Ping Supabase to keep the database awake
+			dbPool.Exec(context.Background(), "SELECT 1")
 		}
 	}()
 
@@ -344,28 +348,28 @@ func fetchLivePriceExtended(symbol string) (float64, float64, string, error) {
 	req, _ := http.NewRequest("GET", url, nil)
 	// We use a User-Agent to prevent Yahoo from blocking us as a bot
 	req.Header.Set("User-Agent", "Mozilla/5.0")
-	
+
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
-	
+
 	if err != nil {
 		return 0, 0, "", err
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != 200 {
 		return 0, 0, "", fmt.Errorf("bad status")
 	}
-	
+
 	var data YahooResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return 0, 0, "", err
 	}
-	
+
 	if len(data.Chart.Result) == 0 {
 		return 0, 0, "", fmt.Errorf("no data found for symbol")
 	}
-	
+
 	meta := data.Chart.Result[0].Meta
 	return meta.RegularMarketPrice, meta.ChartPreviousClose, meta.Currency, nil
 }
