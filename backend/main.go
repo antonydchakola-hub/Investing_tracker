@@ -31,6 +31,7 @@ type Asset struct {
 	ID            int     `json:"id"`
 	UserID        int     `json:"userId"`
 	Name          string  `json:"name"`
+	Nickname      string  `json:"nickname"`
 	Type          string  `json:"type"`
 	Quantity      float64 `json:"quantity"`
 	AvgPrice      float64 `json:"avgPrice"`
@@ -96,6 +97,12 @@ func main() {
 	defer dbPool.Close()
 
 	fmt.Println("Successfully connected to Supabase (Multi-User Mode)!")
+
+	// Run Schema Migration for Nickname
+	_, err = dbPool.Exec(context.Background(), "ALTER TABLE assets ADD COLUMN IF NOT EXISTS nickname VARCHAR(255)")
+	if err != nil {
+		log.Println("Warning: Could not alter table for nickname column:", err)
+	}
 
 	// 3. Setup Router
 	r := gin.Default()
@@ -209,8 +216,8 @@ func main() {
 				currency = "SGD"
 			}
 
-			insertQ := `INSERT INTO assets (user_id, name, asset_type, quantity, avg_price, current_price, previous_close, currency) VALUES ($1, $2, $3, $4, $5, $5, $5, $6)`
-			_, err := dbPool.Exec(context.Background(), insertQ, userID, input.Name, input.Type, input.Quantity, input.AvgPrice, currency)
+			insertQ := `INSERT INTO assets (user_id, name, nickname, asset_type, quantity, avg_price, current_price, previous_close, currency) VALUES ($1, $2, $3, $4, $5, $6, $6, $6, $7)`
+			_, err := dbPool.Exec(context.Background(), insertQ, userID, input.Name, input.Nickname, input.Type, input.Quantity, input.AvgPrice, currency)
 
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to insert asset"})
@@ -225,7 +232,13 @@ func main() {
 			if newTotalQty > 0 {
 				newAvgPrice = ((existingQty * existingAvgPrice) + (input.Quantity * input.AvgPrice)) / newTotalQty
 			}
-			_, err = dbPool.Exec(context.Background(), "UPDATE assets SET quantity=$1, avg_price=$2 WHERE id=$3", newTotalQty, newAvgPrice, existingID)
+			
+			// If a nickname is provided, update it too
+			if input.Nickname != "" {
+				_, err = dbPool.Exec(context.Background(), "UPDATE assets SET quantity=$1, avg_price=$2, nickname=$3 WHERE id=$4", newTotalQty, newAvgPrice, input.Nickname, existingID)
+			} else {
+				_, err = dbPool.Exec(context.Background(), "UPDATE assets SET quantity=$1, avg_price=$2 WHERE id=$3", newTotalQty, newAvgPrice, existingID)
+			}
 
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to merge asset"})
@@ -246,7 +259,7 @@ func main() {
 
 		// Select only assets belonging to this specific user
 		query := `
-			SELECT id, name, asset_type, quantity, avg_price, current_price, previous_close, currency 
+			SELECT id, name, COALESCE(nickname, ''), asset_type, quantity, avg_price, current_price, previous_close, currency 
 			FROM assets WHERE user_id=$1 ORDER BY (current_price * quantity) DESC`
 
 		rows, err := dbPool.Query(context.Background(), query, userID)
@@ -259,10 +272,36 @@ func main() {
 		var assets []Asset
 		for rows.Next() {
 			var a Asset
-			rows.Scan(&a.ID, &a.Name, &a.Type, &a.Quantity, &a.AvgPrice, &a.CurrentPrice, &a.PreviousClose, &a.Currency)
+			rows.Scan(&a.ID, &a.Name, &a.Nickname, &a.Type, &a.Quantity, &a.AvgPrice, &a.CurrentPrice, &a.PreviousClose, &a.Currency)
 			assets = append(assets, a)
 		}
 		c.JSON(http.StatusOK, assets)
+	})
+
+	// PUT /api/assets/:id - Edit an asset securely
+	r.PUT("/api/assets/:id", func(c *gin.Context) {
+		userIDStr := c.GetHeader("X-User-ID")
+		id := c.Param("id")
+		if userIDStr == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			return
+		}
+		userID, _ := strconv.Atoi(userIDStr)
+
+		var input Asset
+		if err := c.ShouldBindJSON(&input); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		updateQ := `UPDATE assets SET nickname=$1, quantity=$2, avg_price=$3 WHERE id=$4 AND user_id=$5`
+		res, err := dbPool.Exec(context.Background(), updateQ, input.Nickname, input.Quantity, input.AvgPrice, id, userID)
+
+		if err != nil || res.RowsAffected() == 0 {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update asset or unauthorized"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"message": "Asset updated!"})
 	})
 
 	// DELETE /api/assets/:id - Remove an asset safely

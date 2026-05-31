@@ -427,6 +427,7 @@
             const formData = new FormData(assetForm);
             const newAsset = {
                 name: formData.get('asset-name'),
+                nickname: formData.get('nickname') || "",
                 type: formData.get('asset-type'),
                 quantity: parseFloat(formData.get('quantity')),
                 avgPrice: parseFloat(formData.get('avg-price'))
@@ -457,6 +458,63 @@
             loadPortfolio();
         }
         window.deleteAsset = deleteAsset;
+
+        function openEditAsset() {
+            if (!currentlyViewedAsset) return;
+            hideAssetDetailsModal();
+            document.getElementById('edit-asset-modal-backdrop').classList.remove('invisible', 'opacity-0');
+            document.getElementById('edit-asset-modal').classList.remove('-translate-y-10', 'scale-95');
+            document.getElementById('edit-asset-modal').classList.add('translate-y-0', 'scale-100');
+
+            document.getElementById('edit-nickname').value = currentlyViewedAsset.nickname || '';
+            document.getElementById('edit-quantity').value = currentlyViewedAsset.quantity;
+            document.getElementById('edit-avg-price').value = currentlyViewedAsset.avgPrice;
+            document.getElementById('edit-symbol').textContent = currentlyViewedAsset.name;
+        }
+        window.openEditAsset = openEditAsset;
+
+        function hideEditAssetModal() {
+            document.getElementById('edit-asset-modal').classList.add('-translate-y-10', 'scale-95');
+            document.getElementById('edit-asset-modal').classList.remove('translate-y-0', 'scale-100');
+            document.getElementById('edit-asset-modal-backdrop').classList.add('opacity-0');
+            setTimeout(() => {
+                if (document.getElementById('edit-asset-modal-backdrop').classList.contains('opacity-0')) {
+                    document.getElementById('edit-asset-modal-backdrop').classList.add('invisible');
+                }
+            }, 300);
+        }
+        window.hideEditAssetModal = hideEditAssetModal;
+
+        async function handleEditAssetSubmit(e) {
+            e.preventDefault();
+            if (!currentlyViewedAsset) return;
+            
+            const btn = document.getElementById('edit-save-btn');
+            const originalText = btn.innerText;
+            btn.innerText = "Saving...";
+            btn.disabled = true;
+
+            const updatedAsset = {
+                nickname: document.getElementById('edit-nickname').value,
+                quantity: parseFloat(document.getElementById('edit-quantity').value),
+                avgPrice: parseFloat(document.getElementById('edit-avg-price').value)
+            };
+
+            await fetch(`${BACKEND_URL}/api/assets/${currentlyViewedAsset.id}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-User-ID': currentUserId
+                },
+                body: JSON.stringify(updatedAsset)
+            });
+
+            btn.innerText = originalText;
+            btn.disabled = false;
+            hideEditAssetModal();
+            loadPortfolio();
+        }
+        window.handleEditAssetSubmit = handleEditAssetSubmit;
 
         async function refreshPrices() {
             const originalText = refreshPricesBtn.innerHTML;
@@ -533,16 +591,20 @@
                     const nativeGainPct = asset.nativeInvested === 0 ? 0 : (asset.nativeGain / asset.nativeInvested) * 100;
                     const row = document.createElement('tr');
                     row.className = 'hover:bg-slate-50 transition-colors duration-150 cursor-pointer';
+                    
+                    const displaySymbol = asset.nickname ? `<div class="text-xs font-medium text-slate-500">${asset.name}</div>` : '';
+                    const displayName = asset.nickname || asset.name;
+
                     row.innerHTML = `
-                        <td class="px-4 md:px-6 py-4 whitespace-nowrap"><div class="text-sm font-bold text-slate-800">${asset.name}</div></td>
-                        <td class="px-4 md:px-6 py-4 whitespace-nowrap"><span class="px-3 py-1 inline-flex text-xs leading-5 font-bold rounded-full ${asset.type === 'Stock' ? 'bg-blue-100 text-blue-700 border border-blue-200' : 'bg-purple-100 text-purple-700 border border-purple-200'}">${asset.type}</span></td>
-                        <td class="px-4 md:px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-slate-600">${formatMoney(asset.nativeInvested, asset.assetCcy)}</td>
-                        <td class="px-4 md:px-6 py-4 whitespace-nowrap text-right text-sm font-bold text-slate-800">${formatMoney(asset.nativeCurrent, asset.assetCcy)}</td>
-                        <td class="px-4 md:px-6 py-4 whitespace-nowrap text-right text-sm font-bold ${getColorClass(asset.nativeGain)}">
+                        <td class="px-4 md:px-6 py-4 whitespace-nowrap"><div class="text-sm font-bold text-slate-800">${displayName}</div>${displaySymbol}</td>
+                        <td class="px-4 md:px-6 py-4 whitespace-nowrap align-top"><span class="px-3 py-1 inline-flex text-xs leading-5 font-bold rounded-full ${asset.type === 'Stock' ? 'bg-blue-100 text-blue-700 border border-blue-200' : 'bg-purple-100 text-purple-700 border border-purple-200'}">${asset.type}</span></td>
+                        <td class="px-4 md:px-6 py-4 whitespace-nowrap align-top text-right text-sm font-medium text-slate-600">${formatMoney(asset.nativeInvested, asset.assetCcy)}</td>
+                        <td class="px-4 md:px-6 py-4 whitespace-nowrap align-top text-right text-sm font-bold text-slate-800">${formatMoney(asset.nativeCurrent, asset.assetCcy)}</td>
+                        <td class="px-4 md:px-6 py-4 whitespace-nowrap align-top text-right text-sm font-bold ${getColorClass(asset.nativeGain)}">
                             <div>${formatMoney(asset.nativeGain, asset.assetCcy)}</div>
                             <div class="text-xs font-medium">(${nativeGainPct.toFixed(2)}%)</div>
                         </td>
-                        <td class="px-4 md:px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-slate-600">${asset.quantity}</td>
+                        <td class="px-4 md:px-6 py-4 whitespace-nowrap align-top text-right text-sm font-medium text-slate-600">${asset.quantity}</td>
                     `;
                     row.addEventListener('click', () => showAssetDetails(asset));
                     portfolioBody.appendChild(row);
@@ -624,10 +686,13 @@
             fetchAndRenderChart(currentAssetSymbol, range, currentAssetCurrency);
         };
 
+        let currentlyViewedAsset = null;
+
         function showAssetDetails(asset) {
+            currentlyViewedAsset = asset;
             currentAssetSymbol = asset.name;
             currentAssetCurrency = asset.currency;
-            assetDetailsNameEl.textContent = asset.name;
+            assetDetailsNameEl.innerHTML = `<span>${asset.nickname || asset.name}</span>${asset.nickname ? `<span class="text-sm font-medium text-slate-500 ml-2">(${asset.name})</span>` : ''}`;
 
             let sym = "$";
             if (asset.currency === "INR") sym = "₹";
@@ -654,9 +719,12 @@
                         <div class="bg-slate-50 p-4 rounded-xl border border-slate-100"><p class="text-xs font-semibold text-slate-500 uppercase">Avg Buy Price</p><p class="text-xl font-bold text-slate-800">${formatMoney(asset.avgPrice, asset.currency)}</p></div>
                     </div>
                     <div class="p-4 border border-slate-100 bg-white rounded-xl"><p class="text-xs font-semibold text-slate-500 uppercase">Quantity</p><p class="text-lg font-bold text-slate-800">${asset.quantity}</p></div>
-                    <div class="pt-4 border-t border-slate-100 mt-2">
-                        <button onclick="deleteAsset(${asset.id})" class="w-full bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-bold py-3 px-4 rounded-xl transition-colors flex items-center justify-center gap-2">
-                            Delete Asset
+                    <div class="pt-4 border-t border-slate-100 mt-2 flex gap-3">
+                        <button onclick="openEditAsset()" class="w-1/2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 font-bold py-3 px-4 rounded-xl transition-colors flex items-center justify-center gap-2">
+                            Edit Asset
+                        </button>
+                        <button onclick="deleteAsset(${asset.id})" class="w-1/2 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 font-bold py-3 px-4 rounded-xl transition-colors flex items-center justify-center gap-2">
+                            Delete
                         </button>
                     </div>
                 </div>
@@ -990,6 +1058,13 @@
                     </div>
                 </div>
 
+                <div>
+                    <label class="block text-sm font-semibold text-slate-700 mb-2">Nickname (Optional)</label>
+                    <input type="text" id="nickname" name="nickname" autocomplete="off"
+                        class="w-full px-4 py-3 bg-slate-50 text-slate-900 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all"
+                        placeholder="e.g., Tech Stocks, BTC Wallet">
+                </div>
+
                 <div><label class="block text-sm font-semibold text-slate-700 mb-2">Asset Type</label><select
                         id="asset-type" name="asset-type" required
                         class="w-full px-4 py-3 bg-slate-50 text-slate-900 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all">
@@ -1030,6 +1105,46 @@
                     class="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1.5 rounded-lg transition-colors">✕</button>
             </div>
             <div id="asset-details-content" class="modal-content-body p-6 overflow-y-auto"></div>
+        </div>
+    </div>
+
+    <!-- Edit Asset Modal -->
+    <div id="edit-asset-modal-backdrop" onclick="if(event.target === this) hideEditAssetModal()"
+        class="modal-backdrop fixed inset-0 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm invisible opacity-0 z-50">
+        <div id="edit-asset-modal"
+            class="modal-content bg-white text-slate-800 rounded-2xl shadow-2xl w-11/12 md:max-w-md transform -translate-y-10 scale-95 flex flex-col border border-slate-100">
+            <div
+                class="flex items-center justify-between p-5 border-b border-slate-100 flex-shrink-0 bg-slate-50/50 rounded-t-2xl">
+                <h3 class="text-xl font-bold text-slate-900">Edit <span id="edit-symbol" class="text-violet-600"></span></h3>
+                <button onclick="hideEditAssetModal()"
+                    class="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1.5 rounded-lg transition-colors">✕</button>
+            </div>
+            <form id="edit-asset-form" onsubmit="handleEditAssetSubmit(event)" class="modal-content-body p-6 space-y-4 overflow-y-auto">
+                <div>
+                    <label class="block text-sm font-semibold text-slate-700 mb-2">Nickname (Optional)</label>
+                    <input type="text" id="edit-nickname" name="edit-nickname" autocomplete="off"
+                        class="w-full px-4 py-3 bg-slate-50 text-slate-900 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all"
+                        placeholder="e.g., Tech Stocks, BTC Wallet">
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-slate-700 mb-2">Quantity</label>
+                    <input type="number" step="any" id="edit-quantity" name="edit-quantity" required
+                        class="w-full px-4 py-3 bg-slate-50 text-slate-900 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all"
+                        placeholder="e.g., 10">
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-slate-700 mb-2">Avg Price (Native Currency)</label>
+                    <input type="number" step="any" id="edit-avg-price" name="edit-avg-price" required
+                        class="w-full px-4 py-3 bg-slate-50 text-slate-900 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-violet-500 transition-all"
+                        placeholder="e.g., 2900.50">
+                </div>
+                <div class="pt-4">
+                    <button id="edit-save-btn" type="submit"
+                        class="w-full bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white font-bold py-3 px-5 rounded-xl shadow-lg shadow-violet-200 transition-all duration-200 transform hover:scale-[1.02]">
+                        Save Changes
+                    </button>
+                </div>
+            </form>
         </div>
     </div>
 </body>
