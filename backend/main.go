@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -57,6 +58,22 @@ type YahooSearchResponse struct {
 		Exchange  string `json:"exchange"`
 		QuoteType string `json:"quoteType"`
 	} `json:"quotes"`
+}
+
+// AMFI specific structs for Indian Mutual Funds
+type MFAPISearchResult struct {
+	SchemeCode int    `json:"schemeCode"`
+	SchemeName string `json:"schemeName"`
+}
+
+type MFAPIDetailResult struct {
+	Meta struct {
+		SchemeName string `json:"scheme_name"`
+	} `json:"meta"`
+	Data []struct {
+		Date string `json:"date"`
+		Nav  string `json:"nav"`
+	} `json:"data"`
 }
 
 func main() {
@@ -185,7 +202,8 @@ func main() {
 		if err == pgx.ErrNoRows {
 			// New Asset Logic: Determine Currency
 			currency := "USD"
-			if strings.HasSuffix(input.Name, ".NS") || strings.HasSuffix(input.Name, ".BO") {
+			// Check for Indian equities (.NS, .BO) or AMFI mutual funds (AMFI:)
+			if strings.HasSuffix(input.Name, ".NS") || strings.HasSuffix(input.Name, ".BO") || strings.HasPrefix(input.Name, "AMFI:") {
 				currency = "INR"
 			} else if strings.HasSuffix(input.Name, ".SI") {
 				currency = "SGD"
@@ -269,7 +287,73 @@ func main() {
 		symbol := c.Param("symbol")
 		rng := c.DefaultQuery("range", "3mo") // Default to 3 months if not provided
 
-		// Protect the payload size. If they want 'max' or '1y', give them monthly/weekly points, not daily.
+		// 1. Handle Official Indian Mutual Funds (AMFI)
+		if strings.HasPrefix(symbol, "AMFI:") {
+			schemeCode := strings.TrimPrefix(symbol, "AMFI:")
+			url := fmt.Sprintf("https://api.mfapi.in/mf/%s", schemeCode)
+			req, _ := http.NewRequest("GET", url, nil)
+			client := &http.Client{Timeout: 5 * time.Second}
+			resp, err := client.Do(req)
+			
+			if err != nil || resp.StatusCode != 200 {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "AMFI data fetch failed"})
+				return
+			}
+			defer resp.Body.Close()
+
+			var amfiData MFAPIDetailResult
+			if err := json.NewDecoder(resp.Body).Decode(&amfiData); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse AMFI data"})
+				return
+			}
+
+			// Determine date cutoff based on range
+			daysToKeep := 90 // Default 3mo
+			if rng == "1wk" { daysToKeep = 7 }
+			if rng == "1mo" { daysToKeep = 30 }
+			if rng == "1y" { daysToKeep = 365 }
+			if rng == "max" { daysToKeep = 99999 } // effectively all time
+
+			cutoffTime := time.Now().AddDate(0, 0, -daysToKeep)
+			
+			var timestamps []int64
+			var closes []float64
+
+			// AMFI provides data newest first, but charts need oldest first. 
+			// We iterate backwards through the AMFI slice.
+			for i := len(amfiData.Data) - 1; i >= 0; i-- {
+				// Parse date from DD-MM-YYYY
+				parsedDate, err := time.Parse("02-01-2006", amfiData.Data[i].Date)
+				if err != nil { continue }
+				
+				if parsedDate.After(cutoffTime) || daysToKeep == 99999 {
+					nav, err := strconv.ParseFloat(amfiData.Data[i].Nav, 64)
+					if err == nil {
+						timestamps = append(timestamps, parsedDate.Unix())
+						closes = append(closes, nav)
+					}
+				}
+			}
+
+			// Mock the exact Yahoo JSON structure so the frontend chart doesn't break
+			c.JSON(http.StatusOK, gin.H{
+				"chart": gin.H{
+					"result": []gin.H{
+						{
+							"timestamp": timestamps,
+							"indicators": gin.H{
+								"quote": []gin.H{
+									{"close": closes},
+								},
+							},
+						},
+					},
+				},
+			})
+			return
+		}
+
+		// 2. Handle Standard Yahoo Assets (Stocks, ETFs, Crypto, etc.)
 		interval := "1d"
 		if rng == "max" {
 			interval = "1mo"
@@ -289,13 +373,12 @@ func main() {
 		}
 		defer resp.Body.Close()
 
-		// Pass the raw JSON straight to the frontend
 		var data map[string]interface{}
 		json.NewDecoder(resp.Body).Decode(&data)
 		c.JSON(http.StatusOK, data)
 	})
 
-	// GET /api/search - Autocomplete ticker symbols via Yahoo Finance
+	// GET /api/search - Autocomplete ticker symbols via Yahoo Finance + AMFI
 	r.GET("/api/search", func(c *gin.Context) {
 		query := c.Query("q")
 		if query == "" {
@@ -303,27 +386,48 @@ func main() {
 			return
 		}
 
-		// Hit Yahoo's search endpoint. Limit quotesCount to 6 for a clean dropdown.
-		url := fmt.Sprintf("https://query2.finance.yahoo.com/v1/finance/search?q=%s&quotesCount=6&newsCount=0", query)
-		req, _ := http.NewRequest("GET", url, nil)
-		req.Header.Set("User-Agent", "Mozilla/5.0")
-
 		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Do(req)
-
-		if err != nil || resp.StatusCode != 200 {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Search proxy failed"})
-			return
-		}
-		defer resp.Body.Close()
-
 		var searchData YahooSearchResponse
-		if err := json.NewDecoder(resp.Body).Decode(&searchData); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse search data"})
-			return
+
+		// 1. Fetch from Yahoo Finance
+		yUrl := fmt.Sprintf("https://query2.finance.yahoo.com/v1/finance/search?q=%s&quotesCount=4&newsCount=0", url.QueryEscape(query))
+		req1, _ := http.NewRequest("GET", yUrl, nil)
+		req1.Header.Set("User-Agent", "Mozilla/5.0")
+		if resp1, err1 := client.Do(req1); err1 == nil && resp1.StatusCode == 200 {
+			json.NewDecoder(resp1.Body).Decode(&searchData)
+			resp1.Body.Close()
 		}
 
-		// Return just the quotes array to the frontend
+		// 2. Fetch from Official Indian Mutual Fund API (AMFI)
+		mfUrl := fmt.Sprintf("https://api.mfapi.in/mf/search?q=%s", url.QueryEscape(query))
+		req2, _ := http.NewRequest("GET", mfUrl, nil)
+		if resp2, err2 := client.Do(req2); err2 == nil && resp2.StatusCode == 200 {
+			var mfData []MFAPISearchResult
+			json.NewDecoder(resp2.Body).Decode(&mfData)
+			resp2.Body.Close()
+
+			// Append up to 6 Indian MFs to the dropdown results
+			limit := len(mfData)
+			if limit > 6 { 
+				limit = 6 
+			}
+			
+			for i := 0; i < limit; i++ {
+				searchData.Quotes = append(searchData.Quotes, struct {
+					Symbol    string `json:"symbol"`
+					ShortName string `json:"shortname"`
+					Exchange  string `json:"exchange"`
+					QuoteType string `json:"quoteType"`
+				}{
+					Symbol:    fmt.Sprintf("AMFI:%d", mfData[i].SchemeCode),
+					ShortName: mfData[i].SchemeName,
+					Exchange:  "AMFI India",
+					QuoteType: "MUTUALFUND",
+				})
+			}
+		}
+
+		// Return combined array to the frontend
 		c.JSON(http.StatusOK, searchData.Quotes)
 	})
 
@@ -365,13 +469,13 @@ func main() {
 	})
 
 	// --- KEEP-ALIVE (RENDER + SUPABASE) ---
-	url := "https://investing-tracker.onrender.com/api/rates"
+	urlKeepAlive := "https://investing-tracker.onrender.com/api/rates"
 	go func() {
 		time.Sleep(1 * time.Minute)
 		ticker := time.NewTicker(10 * time.Minute)
 		for range ticker.C {
 			// 1. Ping Render to keep the web server awake
-			http.Get(url)
+			http.Get(urlKeepAlive)
 
 			// 2. Ping Supabase to keep the database awake
 			dbPool.Exec(context.Background(), "SELECT 1")
@@ -385,22 +489,52 @@ func main() {
 // --- HELPER FUNCTIONS ---
 
 func fetchLivePriceExtended(symbol string) (float64, float64, string, error) {
-	url := fmt.Sprintf("https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=1d", symbol)
-	req, _ := http.NewRequest("GET", url, nil)
+	// 1. Handle Indian Mutual Funds via AMFI
+	if strings.HasPrefix(symbol, "AMFI:") {
+		schemeCode := strings.TrimPrefix(symbol, "AMFI:")
+		url := fmt.Sprintf("https://api.mfapi.in/mf/%s", schemeCode)
+		req, _ := http.NewRequest("GET", url, nil)
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Do(req)
+		
+		if err != nil { 
+			return 0, 0, "", err 
+		}
+		defer resp.Body.Close()
+
+		var data MFAPIDetailResult
+		if err := json.NewDecoder(resp.Body).Decode(&data); err != nil { 
+			return 0, 0, "", err 
+		}
+		if len(data.Data) < 1 { 
+			return 0, 0, "", fmt.Errorf("no amfi data found") 
+		}
+
+		currentPrice, _ := strconv.ParseFloat(data.Data[0].Nav, 64)
+		prevClose := currentPrice
+		
+		// If there is data for yesterday, use it for the daily change calculation
+		if len(data.Data) > 1 {
+			prevClose, _ = strconv.ParseFloat(data.Data[1].Nav, 64)
+		}
+		
+		// AMFI prices are strictly in INR
+		return currentPrice, prevClose, "INR", nil
+	}
+
+	// 2. Standard Yahoo Finance Fetch
+	urlStr := fmt.Sprintf("https://query1.finance.yahoo.com/v8/finance/chart/%s?interval=1d", symbol)
+	req, _ := http.NewRequest("GET", urlStr, nil)
 	// We use a User-Agent to prevent Yahoo from blocking us as a bot
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
 
-	if err != nil {
-		return 0, 0, "", err
+	if err != nil || resp.StatusCode != 200 {
+		return 0, 0, "", fmt.Errorf("bad status or connection error")
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return 0, 0, "", fmt.Errorf("bad status")
-	}
 
 	var data YahooResponse
 	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
