@@ -110,7 +110,7 @@ func main() {
 	// CORS Setup (Allow Frontend to talk to Backend, including custom Auth headers)
 	r.Use(func(c *gin.Context) {
 		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, DELETE")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-User-ID")
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)

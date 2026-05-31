@@ -500,19 +500,24 @@
                 avgPrice: parseFloat(document.getElementById('edit-avg-price').value)
             };
 
-            await fetch(`${BACKEND_URL}/api/assets/${currentlyViewedAsset.id}`, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-User-ID': currentUserId
-                },
-                body: JSON.stringify(updatedAsset)
-            });
-
-            btn.innerText = originalText;
-            btn.disabled = false;
-            hideEditAssetModal();
-            loadPortfolio();
+            try {
+                await fetch(`${BACKEND_URL}/api/assets/${currentlyViewedAsset.id}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-User-ID': currentUserId
+                    },
+                    body: JSON.stringify(updatedAsset)
+                });
+                hideEditAssetModal();
+                loadPortfolio();
+            } catch (err) {
+                console.error("Failed to save edits:", err);
+                alert("Failed to save changes.");
+            } finally {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }
         }
         window.handleEditAssetSubmit = handleEditAssetSubmit;
 
