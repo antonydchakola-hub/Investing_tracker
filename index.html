@@ -1,28 +1,30 @@
 <!DOCTYPE html>
 <html lang="en" class="dark">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Investment Tracker</title>
     <link rel="apple-touch-icon" href="icon.png">
     <link rel="icon" type="image/png" href="icon.png">
-    
+
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    
+
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    
+
     <script type="module">
         // --- CONFIG ---
         const BACKEND_URL = "https://investing-tracker.onrender.com";
 
         // --- STATE ---
-        let currentUserId = null; 
+        let currentUserId = null;
         let currentUsername = null;
         let exchangeRates = { USD: 1, INR: 83, SGD: 1.35 };
         let selectedCurrency = "INR";
-        let currentChart = null; 
+        let currentChart = null;
         let currentAssetSymbol = null;
+        let assetNameInput, autocompleteResults;
 
         // --- DOM Elements ---
         let splashScreen, authContainer, appView, portfolioBody, portfolioByTypeBody, totalValueEl, totalGainLossEl, totalInvestedEl, todayGainLossEl, loadingEl, loadingEl2;
@@ -48,21 +50,21 @@
             authContainer = document.getElementById('auth-container');
             appView = document.getElementById('app-view');
             portfolioBody = document.getElementById('portfolio-body');
-            portfolioByTypeBody = document.getElementById('portfolio-by-type-body'); 
+            portfolioByTypeBody = document.getElementById('portfolio-by-type-body');
             totalValueEl = document.getElementById('total-value');
             totalGainLossEl = document.getElementById('total-gain-loss');
             totalInvestedEl = document.getElementById('total-invested');
             todayGainLossEl = document.getElementById('today-gain-loss');
             loadingEl = document.getElementById('loading');
-            loadingEl2 = document.getElementById('loading-2'); 
-            
+            loadingEl2 = document.getElementById('loading-2');
+
             addAssetBtn = document.getElementById('add-asset-btn');
             addAssetModal = document.getElementById('add-asset-modal');
             addAssetModalBackdrop = document.getElementById('add-asset-modal-backdrop');
             closeModalBtn = document.getElementById('close-modal-btn');
             saveAssetBtn = document.getElementById('save-asset-btn');
             assetForm = document.getElementById('asset-form');
-            
+
             profileDropdown = document.getElementById('profile-dropdown');
             profileDropdownMenu = document.getElementById('profile-dropdown-menu');
             signOutBtn = document.getElementById('sign-out-btn');
@@ -70,7 +72,7 @@
             signupForm = document.getElementById('signup-form');
             authErrorEl = document.getElementById('auth-error');
             profileEmailEl = document.getElementById('profile-email');
-            
+
             currencySelector = document.getElementById('currency-selector');
             refreshPricesBtn = document.getElementById('refresh-prices-btn');
 
@@ -80,14 +82,17 @@
             assetDetailsNameEl = document.getElementById('asset-details-name');
             assetDetailsContentEl = document.getElementById('asset-details-content');
 
+            assetNameInput = document.getElementById('asset-name');
+            autocompleteResults = document.getElementById('autocomplete-results');
+
             setupEventListeners();
-            
+
             setTimeout(() => {
                 splashScreen.classList.add('hidden');
-                
+
                 const storedId = sessionStorage.getItem('userId');
                 const storedName = sessionStorage.getItem('username');
-                
+
                 if (storedId && storedName) {
                     currentUserId = storedId;
                     currentUsername = storedName;
@@ -118,7 +123,64 @@
             window.addEventListener('click', (e) => { if (!profileDropdown.contains(e.target)) profileDropdownMenu.classList.add('hidden'); });
         }
 
-        window.toggleAuthView = function(view) {
+        // --- AUTOCOMPLETE LOGIC ---
+        let debounceTimer;
+
+        document.addEventListener('input', (e) => {
+            if (e.target && e.target.id === 'asset-name') {
+                clearTimeout(debounceTimer);
+                const query = e.target.value.trim();
+
+                if (query.length < 2) {
+                    autocompleteResults.classList.add('hidden');
+                    return;
+                }
+
+                debounceTimer = setTimeout(async () => {
+                    try {
+                        const res = await fetch(`${BACKEND_URL}/api/search?q=${encodeURIComponent(query)}`);
+                        const data = await res.json();
+
+                        if (data && data.length > 0) {
+                            autocompleteResults.innerHTML = data.map(item => `
+                                <div class="px-4 py-3 hover:bg-gray-600 cursor-pointer border-b border-gray-600 last:border-0 transition-colors" 
+                                     onclick="selectAsset('${item.symbol}', '${item.quoteType}')">
+                                    <div class="font-bold text-white flex justify-between">
+                                        <span>${item.symbol}</span>
+                                        <span class="text-xs font-normal text-gray-400 bg-gray-800 px-2 py-0.5 rounded">${item.quoteType}</span>
+                                    </div>
+                                    <div class="text-xs text-gray-400 truncate mt-1">${item.shortname || 'Unknown'} &middot; ${item.exchange}</div>
+                                </div>
+                            `).join('');
+                            autocompleteResults.classList.remove('hidden');
+                        } else {
+                            autocompleteResults.innerHTML = '<div class="px-4 py-3 text-sm text-gray-400">No results found</div>';
+                            autocompleteResults.classList.remove('hidden');
+                        }
+                    } catch (err) {
+                        console.error("Search error", err);
+                    }
+                }, 300);
+            }
+        });
+
+        document.addEventListener('click', (e) => {
+            if (assetNameInput && autocompleteResults && !assetNameInput.contains(e.target) && !autocompleteResults.contains(e.target)) {
+                autocompleteResults.classList.add('hidden');
+            }
+        });
+
+        window.selectAsset = function (symbol, quoteType) {
+            assetNameInput.value = symbol;
+            autocompleteResults.classList.add('hidden');
+
+            const typeSelect = document.getElementById('asset-type');
+            if (quoteType === 'CRYPTOCURRENCY') typeSelect.value = 'Crypto';
+            else if (quoteType === 'MUTUALFUND') typeSelect.value = 'Mutual Fund';
+            else typeSelect.value = 'Stock';
+        };
+
+        window.toggleAuthView = function (view) {
             authErrorEl.classList.add('hidden');
             if (view === 'signup') {
                 document.getElementById('login-form').classList.add('hidden');
@@ -139,8 +201,8 @@
             try {
                 const res = await fetch(`${BACKEND_URL}/api/login`, {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({username: u, password: p})
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: u, password: p })
                 });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error);
@@ -161,18 +223,18 @@
             const u = document.getElementById('signup-username').value;
             const p = document.getElementById('signup-password').value;
             authErrorEl.classList.add('hidden');
-            
-            if (!p) { 
-                authErrorEl.textContent = "Password cannot be empty"; 
+
+            if (!p) {
+                authErrorEl.textContent = "Password cannot be empty";
                 authErrorEl.classList.remove('hidden');
-                return; 
+                return;
             }
 
             try {
                 const res = await fetch(`${BACKEND_URL}/api/register`, {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({username: u, password: p})
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: u, password: p })
                 });
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error);
@@ -191,13 +253,13 @@
         function handleSignOut() {
             sessionStorage.clear();
             currentUserId = null;
-            location.reload(); 
+            location.reload();
         }
 
         // --- APP LOGIC ---
         async function fetchRatesAndInit() {
             selectedCurrency = localStorage.getItem('userCurrencyPreference') || "INR";
-            if(currencySelector) currencySelector.value = selectedCurrency;
+            if (currencySelector) currencySelector.value = selectedCurrency;
             try {
                 const res = await fetch(`${BACKEND_URL}/api/rates`);
                 if (res.ok) exchangeRates = await res.json();
@@ -208,19 +270,19 @@
         function initializeAppView() {
             profileEmailEl.textContent = currentUsername;
             appView.classList.remove('hidden');
-            authContainer.classList.add('hidden'); 
+            authContainer.classList.add('hidden');
             loadPortfolio();
         }
 
         async function loadPortfolio() {
             loadingEl.style.display = 'block';
-            if(loadingEl2) loadingEl2.style.display = 'block';
+            if (loadingEl2) loadingEl2.style.display = 'block';
             try {
                 const response = await fetch(`${BACKEND_URL}/api/assets?t=${Date.now()}`, {
                     headers: { 'X-User-ID': currentUserId }
                 });
                 const portfolio = await response.json();
-                renderPortfolio(portfolio || []); 
+                renderPortfolio(portfolio || []);
             } catch (error) {
                 console.error(error);
                 loadingEl.textContent = "Failed to load data.";
@@ -236,10 +298,10 @@
                 quantity: parseFloat(formData.get('quantity')),
                 avgPrice: parseFloat(formData.get('avg-price'))
             };
-            
+
             await fetch(`${BACKEND_URL}/api/assets`, {
                 method: 'POST',
-                headers: { 
+                headers: {
                     'Content-Type': 'application/json',
                     'X-User-ID': currentUserId
                 },
@@ -252,11 +314,11 @@
         async function deleteAsset(id) {
             if (!confirm("Are you sure?")) return;
             const btn = document.querySelector('button[onclick^="deleteAsset"]');
-            if(btn) btn.innerText = "Deleting...";
-            
-            await fetch(`${BACKEND_URL}/api/assets/${id}`, { 
+            if (btn) btn.innerText = "Deleting...";
+
+            await fetch(`${BACKEND_URL}/api/assets/${id}`, {
                 method: 'DELETE',
-                headers: { 'X-User-ID': currentUserId } 
+                headers: { 'X-User-ID': currentUserId }
             });
             hideAssetDetailsModal();
             loadPortfolio();
@@ -277,12 +339,12 @@
 
         function formatMoney(amount, currency) {
             const locale = currency === 'INR' ? 'en-IN' : 'en-US';
-            
-            return new Intl.NumberFormat(locale, { 
-                style: 'currency', 
-                currency: currency, 
-                minimumFractionDigits: 2, 
-                maximumFractionDigits: 3  
+
+            return new Intl.NumberFormat(locale, {
+                style: 'currency',
+                currency: currency,
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 3
             }).format(amount);
         }
 
@@ -292,13 +354,13 @@
         function renderPortfolio(portfolio) {
             if (loadingEl) loadingEl.style.display = 'none';
             if (loadingEl2) loadingEl2.style.display = 'none';
-            portfolioBody.innerHTML = ''; 
-            portfolioByTypeBody.innerHTML = ''; 
+            portfolioBody.innerHTML = '';
+            portfolioByTypeBody.innerHTML = '';
 
             let totalPortfolioVal = 0, totalInvestedVal = 0, totalDayGain = 0;
 
             const processedAssets = portfolio.map(asset => {
-                const assetCcy = asset.currency || "USD"; 
+                const assetCcy = asset.currency || "USD";
                 const nativePrice = asset.currentPrice || asset.avgPrice;
                 const nativePrev = asset.previousClose || nativePrice;
                 const nativeInvested = (asset.quantity * asset.avgPrice);
@@ -306,9 +368,9 @@
                 const nativeGain = nativeCurrent - nativeInvested;
                 const nativeDayGain = (nativePrice - nativePrev) * asset.quantity;
 
-                const rateToUSD = 1 / (exchangeRates[assetCcy] || 1); 
+                const rateToUSD = 1 / (exchangeRates[assetCcy] || 1);
                 const rateToSelected = exchangeRates[selectedCurrency];
-                
+
                 const convertedCurrent = nativeCurrent * rateToUSD * rateToSelected;
                 const convertedInvested = nativeInvested * rateToUSD * rateToSelected;
                 const convertedDayGain = nativeDayGain * rateToUSD * rateToSelected;
@@ -332,7 +394,7 @@
             todayGainLossEl.className = `text-4xl font-bold ${getColorClass(totalDayGain)}`;
 
             if (processedAssets.length === 0) {
-                 portfolioBody.innerHTML = `<tr><td colspan="6" class="px-6 py-12 text-center text-gray-500">Your portfolio is empty. Add an asset to get started.</td></tr>`;
+                portfolioBody.innerHTML = `<tr><td colspan="6" class="px-6 py-12 text-center text-gray-500">Your portfolio is empty. Add an asset to get started.</td></tr>`;
             } else {
                 processedAssets.sort((a, b) => b.convertedCurrent - a.convertedCurrent).forEach(asset => {
                     const nativeGainPct = asset.nativeInvested === 0 ? 0 : (asset.nativeGain / asset.nativeInvested) * 100;
@@ -395,10 +457,10 @@
             setTimeout(() => { addAssetModalBackdrop.classList.add('invisible'); assetForm.reset(); }, 250);
         }
 
-        window.changeChartRange = function(range) {
+        window.changeChartRange = function (range) {
             const buttons = document.querySelectorAll('.timeframe-btn');
             const ranges = ['1wk', '1mo', '3mo', '1y', 'max'];
-            
+
             buttons.forEach((btn, index) => {
                 if (ranges[index] === range) {
                     btn.className = "timeframe-btn text-xs px-3 py-1 rounded bg-indigo-600 text-white shadow transition";
@@ -411,7 +473,7 @@
                 currentChart.destroy();
                 currentChart = null;
             }
-            
+
             document.getElementById('assetChart').classList.add('hidden');
             document.getElementById('chart-loading').classList.remove('hidden');
             document.getElementById('chart-loading').innerText = "Loading chart...";
@@ -420,13 +482,13 @@
         };
 
         function showAssetDetails(asset) {
-            currentAssetSymbol = asset.name; 
+            currentAssetSymbol = asset.name;
             assetDetailsNameEl.textContent = asset.name;
-            
+
             let sym = "$";
             if (asset.currency === "INR") sym = "₹";
             if (asset.currency === "SGD") sym = "S$";
-            
+
             assetDetailsContentEl.innerHTML = `
                 <div class="space-y-4">
                     <div class="bg-gray-800 border border-gray-700 rounded shadow-inner p-2 pb-4">
@@ -455,7 +517,7 @@
                     </div>
                 </div>
             `;
-            
+
             assetDetailsModalBackdrop.classList.remove('invisible', 'opacity-0');
             assetDetailsModal.classList.remove('-translate-y-10', 'scale-95');
             assetDetailsModal.classList.add('translate-y-0', 'scale-100');
@@ -467,7 +529,7 @@
             assetDetailsModal.classList.add('-translate-y-10', 'scale-95');
             assetDetailsModal.classList.remove('translate-y-0', 'scale-100');
             assetDetailsModalBackdrop.classList.add('opacity-0');
-            
+
             if (currentChart) {
                 currentChart.destroy();
                 currentChart = null;
@@ -480,9 +542,9 @@
             try {
                 const res = await fetch(`${BACKEND_URL}/api/history/${symbol}?range=${range}`);
                 const data = await res.json();
-                
+
                 if (!data.chart || !data.chart.result) throw new Error("No chart data");
-                
+
                 const result = data.chart.result[0];
                 const timestamps = result.timestamp;
                 const closePrices = result.indicators.quote[0].close;
@@ -506,7 +568,7 @@
                 let startPrice = closePrices.find(p => p !== null) || 0;
                 let endPrice = closePrices.slice().reverse().find(p => p !== null) || 0;
                 const isUp = endPrice >= startPrice;
-                const lineColor = isUp ? '#22c55e' : '#ef4444'; 
+                const lineColor = isUp ? '#22c55e' : '#ef4444';
                 const bgColor = isUp ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)';
 
                 currentChart = new Chart(ctx, {
@@ -530,12 +592,12 @@
                         maintainAspectRatio: false,
                         plugins: { legend: { display: false } },
                         scales: {
-                            x: { display: false }, 
-                            y: { 
+                            x: { display: false },
+                            y: {
                                 display: true,
                                 position: 'right',
                                 grid: { color: 'rgba(75, 85, 99, 0.2)', drawBorder: false },
-                                ticks: { color: '#9ca3af', font: {size: 10}, maxTicksLimit: 5 }
+                                ticks: { color: '#9ca3af', font: { size: 10 }, maxTicksLimit: 5 }
                             }
                         },
                         interaction: { mode: 'index', intersect: false }
@@ -548,9 +610,11 @@
         }
     </script>
 </head>
+
 <body class="bg-gray-900 text-gray-200 antialiased">
-    
-    <div id="splash-screen" class="fixed inset-0 bg-gray-900 flex flex-col items-center justify-center z-50 transition-opacity duration-500">
+
+    <div id="splash-screen"
+        class="fixed inset-0 bg-gray-900 flex flex-col items-center justify-center z-50 transition-opacity duration-500">
         <img src="icon.png" alt="App Logo" class="w-32 h-32 mb-4 animate-pulse shadow-lg rounded-2xl">
         <h1 class="text-2xl font-bold tracking-widest text-indigo-400">PORTFOLIO</h1>
     </div>
@@ -562,42 +626,57 @@
                 <h1 class="text-3xl font-bold text-white mb-1">Welcome</h1>
                 <p class="text-md text-gray-400">Manage your investments.</p>
             </div>
-            
-            <div id="auth-error" class="bg-red-800 border border-red-700 text-red-100 px-4 py-3 rounded-lg mb-6 hidden"></div>
-            
+
+            <div id="auth-error" class="bg-red-800 border border-red-700 text-red-100 px-4 py-3 rounded-lg mb-6 hidden">
+            </div>
+
             <form id="login-form" class="bg-gray-800 p-8 rounded-lg shadow-2xl mb-6">
                 <h2 class="text-xl font-semibold text-white mb-6 text-center">Sign In</h2>
                 <div class="mb-4">
                     <label class="block text-sm font-medium text-gray-400 mb-2">Username</label>
-                    <input type="text" id="login-username" required class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="your username">
+                    <input type="text" id="login-username" required
+                        class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        placeholder="your username">
                 </div>
                 <div class="mb-6">
                     <label class="block text-sm font-medium text-gray-400 mb-2">Password</label>
-                    <input type="password" id="login-password" required class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="password">
+                    <input type="password" id="login-password" required
+                        class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        placeholder="password">
                 </div>
-                <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-5 rounded-lg shadow-md transition-all duration-200 mb-5">Sign In</button>
-                
+                <button type="submit"
+                    class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-5 rounded-lg shadow-md transition-all duration-200 mb-5">Sign
+                    In</button>
+
                 <div class="text-center text-sm text-gray-400">
-                    Don't have an account? 
-                    <a href="#" onclick="toggleAuthView('signup'); return false;" class="text-indigo-400 hover:text-indigo-300 font-medium transition-colors">Create one</a>
+                    Don't have an account?
+                    <a href="#" onclick="toggleAuthView('signup'); return false;"
+                        class="text-indigo-400 hover:text-indigo-300 font-medium transition-colors">Create one</a>
                 </div>
             </form>
-            
+
             <form id="signup-form" class="bg-gray-800 p-8 rounded-lg shadow-2xl hidden mb-6">
-                 <h2 class="text-xl font-semibold text-white mb-6 text-center">Create Account</h2>
-                 <div class="mb-4">
+                <h2 class="text-xl font-semibold text-white mb-6 text-center">Create Account</h2>
+                <div class="mb-4">
                     <label class="block text-sm font-medium text-gray-400 mb-2">Username</label>
-                    <input type="text" id="signup-username" class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="create a username">
+                    <input type="text" id="signup-username"
+                        class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        placeholder="create a username">
                 </div>
                 <div class="mb-6">
                     <label class="block text-sm font-medium text-gray-400 mb-2">Password</label>
-                    <input type="password" id="signup-password" class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Password (can be simple)">
+                    <input type="password" id="signup-password"
+                        class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        placeholder="Password (can be simple)">
                 </div>
-                <button type="submit" class="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-5 rounded-lg shadow-md transition-all duration-200 mb-5">Sign Up</button>
-                
+                <button type="submit"
+                    class="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-3 px-5 rounded-lg shadow-md transition-all duration-200 mb-5">Sign
+                    Up</button>
+
                 <div class="text-center text-sm text-gray-400">
-                    Already have an account? 
-                    <a href="#" onclick="toggleAuthView('login'); return false;" class="text-indigo-400 hover:text-indigo-300 font-medium transition-colors">Log in</a>
+                    Already have an account?
+                    <a href="#" onclick="toggleAuthView('login'); return false;"
+                        class="text-indigo-400 hover:text-indigo-300 font-medium transition-colors">Log in</a>
                 </div>
             </form>
         </div>
@@ -605,67 +684,187 @@
 
     <div id="app-view" class="container mx-auto max-w-7xl p-4 md:p-8 hidden">
         <header class="mb-6 flex flex-wrap justify-between items-center gap-y-4 gap-x-2">
-            <div><h1 class="text-2xl md:text-3xl font-bold text-white">Portfolio</h1></div>
+            <div>
+                <h1 class="text-2xl md:text-3xl font-bold text-white">Portfolio</h1>
+            </div>
             <div class="flex items-center gap-2 md:gap-4">
-                <select id="currency-selector" class="bg-gray-800 text-white border border-gray-600 rounded px-2 py-2 md:px-3 text-sm focus:outline-none shadow-sm">
-                    <option value="INR">INR</option><option value="USD">USD</option><option value="SGD">SGD </option>
+                <select id="currency-selector"
+                    class="bg-gray-800 text-white border border-gray-600 rounded px-2 py-2 md:px-3 text-sm focus:outline-none shadow-sm">
+                    <option value="INR">INR</option>
+                    <option value="USD">USD</option>
+                    <option value="SGD">SGD </option>
                 </select>
-                <button id="refresh-prices-btn" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors shadow-lg">Refresh</button>
+                <button id="refresh-prices-btn"
+                    class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors shadow-lg">Refresh</button>
                 <div class="relative">
-                    <button id="profile-dropdown" class="flex items-center justify-center w-10 h-10 md:w-12 md:h-12 bg-gray-700 text-gray-300 rounded-full hover:bg-gray-600 transition-colors focus:outline-none">
-                        <svg class="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                    <button id="profile-dropdown"
+                        class="flex items-center justify-center w-10 h-10 md:w-12 md:h-12 bg-gray-700 text-gray-300 rounded-full hover:bg-gray-600 transition-colors focus:outline-none">
+                        <svg class="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                        </svg>
                     </button>
-                    <div id="profile-dropdown-menu" class="absolute right-0 mt-2 w-56 bg-gray-800 rounded-lg shadow-2xl border border-gray-700 z-20 hidden">
-                        <div class="p-4 border-b border-gray-700"><p class="text-sm text-gray-400">Signed in as</p><p id="profile-email" class="text-sm font-medium text-white truncate">User</p></div>
-                        <div class="py-2 border-t border-gray-700"><button id="sign-out-btn" class="w-full text-left block px-4 py-2 text-sm text-red-400 hover:bg-red-800 hover:text-red-200 transition-colors">Sign Out</button></div>
+                    <div id="profile-dropdown-menu"
+                        class="absolute right-0 mt-2 w-56 bg-gray-800 rounded-lg shadow-2xl border border-gray-700 z-20 hidden">
+                        <div class="p-4 border-b border-gray-700">
+                            <p class="text-sm text-gray-400">Signed in as</p>
+                            <p id="profile-email" class="text-sm font-medium text-white truncate">User</p>
+                        </div>
+                        <div class="py-2 border-t border-gray-700"><button id="sign-out-btn"
+                                class="w-full text-left block px-4 py-2 text-sm text-red-400 hover:bg-red-800 hover:text-red-200 transition-colors">Sign
+                                Out</button></div>
                     </div>
                 </div>
             </div>
         </header>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            <div class="bg-gray-800 p-6 rounded-lg shadow-lg"><h2 class="text-sm font-medium text-gray-400 mb-2">Total Portfolio Value</h2><div id="total-value" class="text-4xl font-bold text-white mb-2">--</div><div id="total-gain-loss" class="text-lg font-medium text-gray-500">--</div></div>
-            <div class="bg-gray-800 p-6 rounded-lg shadow-lg"><h2 class="text-sm font-medium text-gray-400 mb-2">Total Invested</h2><div id="total-invested" class="text-4xl font-bold text-white">--</div><p class="text-gray-500 text-sm">Your initial capital</p></div>
-            <div class="bg-gray-800 p-6 rounded-lg shadow-lg"><h2 class="text-sm font-medium text-gray-400 mb-2">Today's Gain/Loss</h2><div id="today-gain-loss" class="text-4xl font-bold text-gray-500">--</div><p class="text-gray-500 text-sm">Since market open</p></div>
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-sm font-medium text-gray-400 mb-2">Total Portfolio Value</h2>
+                <div id="total-value" class="text-4xl font-bold text-white mb-2">--</div>
+                <div id="total-gain-loss" class="text-lg font-medium text-gray-500">--</div>
+            </div>
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-sm font-medium text-gray-400 mb-2">Total Invested</h2>
+                <div id="total-invested" class="text-4xl font-bold text-white">--</div>
+                <p class="text-gray-500 text-sm">Your initial capital</p>
+            </div>
+            <div class="bg-gray-800 p-6 rounded-lg shadow-lg">
+                <h2 class="text-sm font-medium text-gray-400 mb-2">Today's Gain/Loss</h2>
+                <div id="today-gain-loss" class="text-4xl font-bold text-gray-500">--</div>
+                <p class="text-gray-500 text-sm">Since market open</p>
+            </div>
         </div>
 
         <div class="bg-gray-800 rounded-lg shadow-lg overflow-hidden mb-8">
-            <div class="p-4 sm:p-6 border-b border-gray-700 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1 sm:gap-0">
+            <div
+                class="p-4 sm:p-6 border-b border-gray-700 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-1 sm:gap-0">
                 <h2 class="text-lg sm:text-xl font-semibold text-white">Your Holdings</h2>
                 <span class="text-xs text-gray-400">*Individual assets shown in native currency</span>
             </div>
-            
-            <div class="overflow-x-auto"><table class="min-w-full divide-y divide-gray-700"><thead class="bg-gray-800"><tr><th class="px-4 md:px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Asset</th><th class="px-4 md:px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Type</th><th class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Invested Value</th><th class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Current Value</th><th class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Total Gain/Loss</th><th class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Quantity</th></tr></thead><tbody id="portfolio-body" class="bg-gray-800 divide-y divide-gray-700"></tbody></table></div>
+
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-700">
+                    <thead class="bg-gray-800">
+                        <tr>
+                            <th
+                                class="px-4 md:px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                                Asset</th>
+                            <th
+                                class="px-4 md:px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                                Type</th>
+                            <th
+                                class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
+                                Invested Value</th>
+                            <th
+                                class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
+                                Current Value</th>
+                            <th
+                                class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
+                                Total Gain/Loss</th>
+                            <th
+                                class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
+                                Quantity</th>
+                        </tr>
+                    </thead>
+                    <tbody id="portfolio-body" class="bg-gray-800 divide-y divide-gray-700"></tbody>
+                </table>
+            </div>
             <div id="loading" class="p-6 text-center text-gray-500">Loading portfolio data...</div>
         </div>
-        
+
         <div class="bg-gray-800 rounded-lg shadow-lg overflow-hidden">
-            <div class="p-4 sm:p-6 border-b border-gray-700"><h2 class="text-lg sm:text-xl font-semibold text-white">Holdings by Type</h2></div>
-            <div class="overflow-x-auto"><table class="min-w-full divide-y divide-gray-700"><thead class="bg-gray-800"><tr><th class="px-4 md:px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Asset Type</th><th class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Holdings</th><th class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Invested Value</th><th class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Current Value</th><th class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">Total Gain/Loss</th></tr></thead><tbody id="portfolio-by-type-body" class="bg-gray-800 divide-y divide-gray-700"></tbody></table></div>
+            <div class="p-4 sm:p-6 border-b border-gray-700">
+                <h2 class="text-lg sm:text-xl font-semibold text-white">Holdings by Type</h2>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-700">
+                    <thead class="bg-gray-800">
+                        <tr>
+                            <th
+                                class="px-4 md:px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">
+                                Asset Type</th>
+                            <th
+                                class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
+                                Holdings</th>
+                            <th
+                                class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
+                                Invested Value</th>
+                            <th
+                                class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
+                                Current Value</th>
+                            <th
+                                class="px-4 md:px-6 py-3 text-right text-xs font-medium text-gray-400 uppercase tracking-wider">
+                                Total Gain/Loss</th>
+                        </tr>
+                    </thead>
+                    <tbody id="portfolio-by-type-body" class="bg-gray-800 divide-y divide-gray-700"></tbody>
+                </table>
+            </div>
             <div id="loading-2" class="p-6 text-center text-gray-500">Loading portfolio data...</div>
         </div>
-        
-        <button id="add-asset-btn" class="fixed bottom-8 right-8 bg-indigo-600 hover:bg-indigo-700 text-white w-16 h-16 rounded-full shadow-2xl flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-indigo-500 z-30"><svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg></button>
+
+        <button id="add-asset-btn"
+            class="fixed bottom-8 right-8 bg-indigo-600 hover:bg-indigo-700 text-white w-16 h-16 rounded-full shadow-2xl flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-indigo-500 z-30"><svg
+                class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6">
+                </path>
+            </svg></button>
     </div>
 
-    <div id="add-asset-modal-backdrop" class="modal-backdrop fixed inset-0 flex items-center justify-center bg-black bg-opacity-75 invisible opacity-0">
-        <div id="add-asset-modal" class="modal-content bg-gray-800 text-gray-200 rounded-lg shadow-2xl w-11/12 md:max-w-md transform -translate-y-10 scale-95 flex flex-col">
-            <div class="flex items-center justify-between p-5 border-b border-gray-700 flex-shrink-0"><h3 class="text-xl font-semibold text-white">Add New Investment</h3><button id="close-modal-btn" class="text-gray-400 hover:text-white transition-colors">✕</button></div>
+    <div id="add-asset-modal-backdrop"
+        class="modal-backdrop fixed inset-0 flex items-center justify-center bg-black bg-opacity-75 invisible opacity-0">
+        <div id="add-asset-modal"
+            class="modal-content bg-gray-800 text-gray-200 rounded-lg shadow-2xl w-11/12 md:max-w-md transform -translate-y-10 scale-95 flex flex-col">
+            <div class="flex items-center justify-between p-5 border-b border-gray-700 flex-shrink-0">
+                <h3 class="text-xl font-semibold text-white">Add New Investment</h3><button id="close-modal-btn"
+                    class="text-gray-400 hover:text-white transition-colors">✕</button>
+            </div>
             <form id="asset-form" class="modal-content-body p-6 space-y-4 overflow-y-auto">
-                <div><label class="block text-sm font-medium text-gray-400 mb-2">Asset Name</label><input type="text" id="asset-name" name="asset-name" required class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg" placeholder="e.g., RELIANCE.NS"></div>
-                <div><label class="block text-sm font-medium text-gray-400 mb-2">Asset Type</label><select id="asset-type" name="asset-type" required class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg"><option value="Stock">Stock</option><option value="Mutual Fund">Mutual Fund</option><option value="Crypto">Crypto</option></select></div>
-                <div><label class="block text-sm font-medium text-gray-400 mb-2">Quantity</label><input type="number" step="any" id="quantity" name="quantity" required class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg" placeholder="e.g., 10"></div>
-                <div><label class="block text-sm font-medium text-gray-400 mb-2">Avg Price (Native Currency)</label><input type="number" step="any" id="avg-price" name="avg-price" required class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg" placeholder="e.g., 2900.50"></div>
-                <div class="pt-4"><button id="save-asset-btn" type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-5 rounded-lg shadow-md transition-all duration-200">Save Asset</button></div>
+
+                <div class="relative">
+                    <label class="block text-sm font-medium text-gray-400 mb-2">Asset Name / Symbol</label>
+                    <input type="text" id="asset-name" name="asset-name" autocomplete="off" required
+                        class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        placeholder="Type a company name or symbol...">
+                    <div id="autocomplete-results"
+                        class="absolute z-50 w-full mt-1 bg-gray-700 border border-gray-600 rounded-lg shadow-2xl hidden max-h-48 overflow-y-auto">
+                    </div>
+                </div>
+
+                <div><label class="block text-sm font-medium text-gray-400 mb-2">Asset Type</label><select
+                        id="asset-type" name="asset-type" required
+                        class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg">
+                        <option value="Stock">Stock</option>
+                        <option value="Mutual Fund">Mutual Fund</option>
+                        <option value="Crypto">Crypto</option>
+                    </select></div>
+                <div><label class="block text-sm font-medium text-gray-400 mb-2">Quantity</label><input type="number"
+                        step="any" id="quantity" name="quantity" required
+                        class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg"
+                        placeholder="e.g., 10"></div>
+                <div><label class="block text-sm font-medium text-gray-400 mb-2">Avg Price (Native
+                        Currency)</label><input type="number" step="any" id="avg-price" name="avg-price" required
+                        class="w-full px-4 py-3 bg-gray-700 text-gray-200 border border-gray-600 rounded-lg"
+                        placeholder="e.g., 2900.50"></div>
+                <div class="pt-4"><button id="save-asset-btn" type="submit"
+                        class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-5 rounded-lg shadow-md transition-all duration-200">Save
+                        Asset</button></div>
             </form>
         </div>
     </div>
-    
-    <div id="asset-details-modal-backdrop" class="modal-backdrop fixed inset-0 flex items-center justify-center bg-black bg-opacity-75 invisible opacity-0">
-        <div id="asset-details-modal" class="modal-content bg-gray-800 text-gray-200 rounded-lg shadow-2xl w-11/12 md:max-w-md transform -translate-y-10 scale-95 flex flex-col">
-            <div class="flex items-center justify-between p-5 border-b border-gray-700 flex-shrink-0"><h3 id="asset-details-name" class="text-xl font-semibold text-white">Asset Details</h3><button id="close-details-modal-btn" class="text-gray-400 hover:text-white transition-colors">✕</button></div>
+
+    <div id="asset-details-modal-backdrop"
+        class="modal-backdrop fixed inset-0 flex items-center justify-center bg-black bg-opacity-75 invisible opacity-0">
+        <div id="asset-details-modal"
+            class="modal-content bg-gray-800 text-gray-200 rounded-lg shadow-2xl w-11/12 md:max-w-md transform -translate-y-10 scale-95 flex flex-col">
+            <div class="flex items-center justify-between p-5 border-b border-gray-700 flex-shrink-0">
+                <h3 id="asset-details-name" class="text-xl font-semibold text-white">Asset Details</h3><button
+                    id="close-details-modal-btn" class="text-gray-400 hover:text-white transition-colors">✕</button>
+            </div>
             <div id="asset-details-content" class="modal-content-body p-6 overflow-y-auto"></div>
         </div>
     </div>
 </body>
+
 </html>

@@ -28,7 +28,7 @@ type User struct {
 
 type Asset struct {
 	ID            int     `json:"id"`
-	UserID        int     `json:"userId"` // Links asset to a specific user account
+	UserID        int     `json:"userId"`
 	Name          string  `json:"name"`
 	Type          string  `json:"type"`
 	Quantity      float64 `json:"quantity"`
@@ -48,6 +48,15 @@ type YahooResponse struct {
 			} `json:"meta"`
 		} `json:"result"`
 	} `json:"chart"`
+}
+
+type YahooSearchResponse struct {
+	Quotes []struct {
+		Symbol    string `json:"symbol"`
+		ShortName string `json:"shortname"`
+		Exchange  string `json:"exchange"`
+		QuoteType string `json:"quoteType"`
+	} `json:"quotes"`
 }
 
 func main() {
@@ -284,6 +293,38 @@ func main() {
 		var data map[string]interface{}
 		json.NewDecoder(resp.Body).Decode(&data)
 		c.JSON(http.StatusOK, data)
+	})
+
+	// GET /api/search - Autocomplete ticker symbols via Yahoo Finance
+	r.GET("/api/search", func(c *gin.Context) {
+		query := c.Query("q")
+		if query == "" {
+			c.JSON(http.StatusOK, []interface{}{})
+			return
+		}
+
+		// Hit Yahoo's search endpoint. Limit quotesCount to 6 for a clean dropdown.
+		url := fmt.Sprintf("https://query2.finance.yahoo.com/v1/finance/search?q=%s&quotesCount=6&newsCount=0", query)
+		req, _ := http.NewRequest("GET", url, nil)
+		req.Header.Set("User-Agent", "Mozilla/5.0")
+
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Do(req)
+
+		if err != nil || resp.StatusCode != 200 {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Search proxy failed"})
+			return
+		}
+		defer resp.Body.Close()
+
+		var searchData YahooSearchResponse
+		if err := json.NewDecoder(resp.Body).Decode(&searchData); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse search data"})
+			return
+		}
+
+		// Return just the quotes array to the frontend
+		c.JSON(http.StatusOK, searchData.Quotes)
 	})
 
 	// POST /api/update-prices - Global Price Updater (Scraper)
