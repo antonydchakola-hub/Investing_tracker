@@ -46,6 +46,18 @@
             .modal-content { transition: all 0.25s ease; max-height: 90vh; }
             .modal-content-body::-webkit-scrollbar { display: none; }
             .modal-content-body { -ms-overflow-style: none; scrollbar-width: none; }
+            @keyframes gradient-x {
+                0%, 100% { background-position: 0% 50%; }
+                50% { background-position: 100% 50%; }
+            }
+            .animate-gradient-x {
+                background-size: 200% 200%;
+                animation: gradient-x 3s ease infinite;
+            }
+            .ai-content ul { list-style-type: disc; padding-left: 1.5rem; margin-top: 0.5rem; margin-bottom: 0.5rem; }
+            .ai-content li { margin-bottom: 0.25rem; }
+            .ai-content p { margin-bottom: 0.5rem; }
+            .ai-content strong { color: #1e293b; }
         `;
         const styleSheet = document.createElement("style");
         styleSheet.type = "text/css";
@@ -533,6 +545,39 @@
             refreshPricesBtn.disabled = false;
         }
 
+        async function askAI() {
+            const btn = document.getElementById('ask-ai-btn');
+            const panel = document.getElementById('ai-insights-panel');
+            const content = document.getElementById('ai-insights-content');
+            
+            // UI Loading state
+            panel.classList.remove('hidden');
+            content.innerHTML = '<div class="flex items-center gap-3 text-fuchsia-600 font-medium"><svg class="animate-spin w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Analyzing portfolio and latest news...</div>';
+            
+            const originalBtnHtml = btn.innerHTML;
+            btn.innerHTML = 'Thinking...';
+            btn.disabled = true;
+
+            try {
+                const res = await fetch(`${BACKEND_URL}/api/insights`, {
+                    method: 'POST',
+                    headers: { 'X-User-ID': currentUserId }
+                });
+                
+                if (!res.ok) throw new Error("Failed to get insights");
+                
+                const data = await res.json();
+                content.innerHTML = `<div class="ai-content">${data.insights}</div>`;
+            } catch (err) {
+                console.error("AI Error:", err);
+                content.innerHTML = `<div class="text-red-500 font-medium">Sorry, could not generate insights at this time.</div>`;
+            } finally {
+                btn.innerHTML = originalBtnHtml;
+                btn.disabled = false;
+            }
+        }
+        window.askAI = askAI;
+
         function formatMoney(amount, currency) {
             const locale = currency === 'INR' ? 'en-IN' : 'en-US';
 
@@ -923,6 +968,11 @@
                 </select>
                 <button id="refresh-prices-btn"
                     class="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-all shadow-md shadow-emerald-200">Refresh</button>
+                <button id="ask-ai-btn" onclick="askAI()"
+                    class="bg-gradient-to-r from-fuchsia-500 to-pink-500 hover:from-fuchsia-600 hover:to-pink-600 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-all shadow-md shadow-fuchsia-200 flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    Ask AI
+                </button>
                 <div class="relative">
                     <button id="profile-dropdown"
                         class="flex items-center justify-center w-10 h-10 md:w-12 md:h-12 bg-white text-slate-600 border border-slate-200 rounded-full hover:bg-slate-50 transition-colors shadow-sm focus:outline-none">
@@ -945,6 +995,19 @@
                 </div>
             </div>
         </header>
+
+        <!-- AI Insights Panel -->
+        <div id="ai-insights-panel" class="hidden mb-8 relative rounded-2xl p-[2px] bg-gradient-to-r from-fuchsia-500 via-purple-500 to-violet-500 animate-gradient-x shadow-lg shadow-purple-300">
+            <div class="bg-white rounded-xl p-6 h-full w-full">
+                <div class="flex items-center gap-2 mb-4">
+                    <svg class="w-6 h-6 text-fuchsia-500 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    <h2 class="text-xl font-bold text-slate-800">AI Insights</h2>
+                </div>
+                <div id="ai-insights-content" class="text-slate-600">
+                    <!-- AI content goes here -->
+                </div>
+            </div>
+        </div>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <div

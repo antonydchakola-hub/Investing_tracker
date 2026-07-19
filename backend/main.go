@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -75,6 +76,34 @@ type MFAPIDetailResult struct {
 		Date string `json:"date"`
 		Nav  string `json:"nav"`
 	} `json:"data"`
+}
+
+type YahooSearchNewsResponse struct {
+	News []struct {
+		Title string `json:"title"`
+	} `json:"news"`
+}
+
+type GeminiRequest struct {
+	Contents []GeminiContent `json:"contents"`
+}
+
+type GeminiContent struct {
+	Parts []GeminiPart `json:"parts"`
+}
+
+type GeminiPart struct {
+	Text string `json:"text"`
+}
+
+type GeminiResponse struct {
+	Candidates []struct {
+		Content struct {
+			Parts []struct {
+				Text string `json:"text"`
+			} `json:"parts"`
+		} `json:"content"`
+	} `json:"candidates"`
 }
 
 func main() {
@@ -507,6 +536,66 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"USD": 1.0, "INR": inr, "SGD": sgd})
 	})
 
+	// POST /api/insights - Generate AI insights for user's portfolio
+	r.POST("/api/insights", func(c *gin.Context) {
+		userIDStr := c.GetHeader("X-User-ID")
+		if userIDStr == "" {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+			return
+		}
+		userID, _ := strconv.Atoi(userIDStr)
+
+		// 1. Fetch Top Assets
+		query := `SELECT name, quantity, current_price, currency FROM assets WHERE user_id=$1 ORDER BY (current_price * quantity) DESC LIMIT 5`
+		rows, err := dbPool.Query(context.Background(), query, userID)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+			return
+		}
+		defer rows.Close()
+
+		var portfolioDesc []string
+		var symbols []string
+
+		for rows.Next() {
+			var name, currency string
+			var qty, price float64
+			rows.Scan(&name, &qty, &price, &currency)
+			portfolioDesc = append(portfolioDesc, fmt.Sprintf("%.2f units of %s (Price: %.2f %s)", qty, name, price, currency))
+			// Avoid AMFI tickers for Yahoo News
+			if !strings.HasPrefix(name, "AMFI:") {
+				symbols = append(symbols, name)
+			}
+		}
+
+		if len(portfolioDesc) == 0 {
+			c.JSON(http.StatusOK, gin.H{"insights": "Your portfolio is currently empty. Add some assets to get AI insights!"})
+			return
+		}
+
+		// 2. Fetch News
+		newsHeadlines := fetchNewsForAssets(symbols)
+
+		// 3. Construct Prompt
+		prompt := fmt.Sprintf(`You are an expert financial advisor. The user holds the following top assets:
+%s
+
+Today's recent news headlines for these assets:
+%s
+
+Based on this information, provide 3 short, actionable pivot strategies or insights for the user. Format the response nicely using HTML (use <ul><li>...</li></ul> or <strong>bold text</strong>). Do NOT use markdown. Keep it concise, professional, and visually appealing.`, strings.Join(portfolioDesc, "\n"), newsHeadlines)
+
+		// 4. Call Gemini
+		insights, err := callGeminiAPI(prompt)
+		if err != nil {
+			log.Println("Gemini Error:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate insights"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"insights": insights})
+	})
+
 	// --- KEEP-ALIVE (RENDER + SUPABASE) ---
 	urlKeepAlive := "https://investing-tracker.onrender.com/api/rates"
 	go func() {
@@ -586,4 +675,88 @@ func fetchLivePriceExtended(symbol string) (float64, float64, string, error) {
 
 	meta := data.Chart.Result[0].Meta
 	return meta.RegularMarketPrice, meta.ChartPreviousClose, meta.Currency, nil
+}
+
+func fetchNewsForAssets(symbols []string) string {
+	if len(symbols) == 0 {
+		return "No news available."
+	}
+	// Take up to 3 symbols to avoid overly long query string
+	if len(symbols) > 3 {
+		symbols = symbols[:3]
+	}
+	
+	query := strings.Join(symbols, ",")
+	urlStr := fmt.Sprintf("https://query2.finance.yahoo.com/v1/finance/search?q=%s&quotesCount=0&newsCount=3", url.QueryEscape(query))
+	
+	req, _ := http.NewRequest("GET", urlStr, nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	
+	if err != nil || resp.StatusCode != 200 {
+		return "Could not fetch news."
+	}
+	defer resp.Body.Close()
+
+	var result YahooSearchNewsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "Error parsing news."
+	}
+
+	var headlines []string
+	for _, n := range result.News {
+		headlines = append(headlines, "- "+n.Title)
+	}
+
+	if len(headlines) == 0 {
+		return "No recent news found."
+	}
+	return strings.Join(headlines, "\n")
+}
+
+func callGeminiAPI(prompt string) (string, error) {
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		return "", fmt.Errorf("GEMINI_API_KEY not set")
+	}
+
+	urlStr := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=%s", apiKey)
+
+	reqBody := GeminiRequest{
+		Contents: []GeminiContent{
+			{
+				Parts: []GeminiPart{
+					{Text: prompt},
+				},
+			},
+		},
+	}
+	
+	jsonData, _ := json.Marshal(reqBody)
+	
+	req, _ := http.NewRequest("POST", urlStr, bytes.NewBuffer(jsonData))
+	req.Header.Set("Content-Type", "application/json")
+	
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("gemini api error: status %d", resp.StatusCode)
+	}
+
+	var result GeminiResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", err
+	}
+
+	if len(result.Candidates) > 0 && len(result.Candidates[0].Content.Parts) > 0 {
+		return result.Candidates[0].Content.Parts[0].Text, nil
+	}
+
+	return "No insights could be generated.", nil
 }
