@@ -128,10 +128,10 @@ func main() {
 	fmt.Println("Successfully connected to Supabase (Multi-User Mode)!")
 
 	// Run Schema Migration for Nickname
-	_, err = dbPool.Exec(context.Background(), "ALTER TABLE assets ADD COLUMN IF NOT EXISTS nickname VARCHAR(255)")
-	if err != nil {
-		log.Println("Warning: Could not alter table for nickname column:", err)
-	}
+	// _, err = dbPool.Exec(context.Background(), "ALTER TABLE assets ADD COLUMN IF NOT EXISTS nickname VARCHAR(255)")
+	// if err != nil {
+	// 	log.Println("Warning: Could not alter table for nickname column:", err)
+	// }
 
 	// 3. Setup Router
 	r := gin.Default()
@@ -172,7 +172,8 @@ func main() {
 			u.Username, string(hashedPwd)).Scan(&newID)
 
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Username is likely already taken"})
+			log.Println("DB Error during signup:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Signup failed: " + err.Error()})
 			return
 		}
 
@@ -194,8 +195,13 @@ func main() {
 		err := dbPool.QueryRow(context.Background(),
 			"SELECT id, password_hash FROM users WHERE username=$1", u.Username).Scan(&dbID, &dbHash)
 
-		if err == pgx.ErrNoRows {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
+				return
+			}
+			log.Println("DB Error during login:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error: " + err.Error()})
 			return
 		}
 
@@ -261,7 +267,7 @@ func main() {
 			if newTotalQty > 0 {
 				newAvgPrice = ((existingQty * existingAvgPrice) + (input.Quantity * input.AvgPrice)) / newTotalQty
 			}
-			
+
 			// If a nickname is provided, update it too
 			if input.Nickname != "" {
 				_, err = dbPool.Exec(context.Background(), "UPDATE assets SET quantity=$1, avg_price=$2, nickname=$3 WHERE id=$4", newTotalQty, newAvgPrice, input.Nickname, existingID)
@@ -362,7 +368,7 @@ func main() {
 			req, _ := http.NewRequest("GET", url, nil)
 			client := &http.Client{Timeout: 5 * time.Second}
 			resp, err := client.Do(req)
-			
+
 			if err != nil || resp.StatusCode != 200 {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "AMFI data fetch failed"})
 				return
@@ -377,23 +383,33 @@ func main() {
 
 			// Determine date cutoff based on range
 			daysToKeep := 90 // Default 3mo
-			if rng == "1wk" { daysToKeep = 7 }
-			if rng == "1mo" { daysToKeep = 30 }
-			if rng == "1y" { daysToKeep = 365 }
-			if rng == "max" { daysToKeep = 99999 } // effectively all time
+			if rng == "1wk" {
+				daysToKeep = 7
+			}
+			if rng == "1mo" {
+				daysToKeep = 30
+			}
+			if rng == "1y" {
+				daysToKeep = 365
+			}
+			if rng == "max" {
+				daysToKeep = 99999
+			} // effectively all time
 
 			cutoffTime := time.Now().AddDate(0, 0, -daysToKeep)
-			
+
 			var timestamps []int64
 			var closes []float64
 
-			// AMFI provides data newest first, but charts need oldest first. 
+			// AMFI provides data newest first, but charts need oldest first.
 			// We iterate backwards through the AMFI slice.
 			for i := len(amfiData.Data) - 1; i >= 0; i-- {
 				// Parse date from DD-MM-YYYY
 				parsedDate, err := time.Parse("02-01-2006", amfiData.Data[i].Date)
-				if err != nil { continue }
-				
+				if err != nil {
+					continue
+				}
+
 				if parsedDate.After(cutoffTime) || daysToKeep == 99999 {
 					nav, err := strconv.ParseFloat(amfiData.Data[i].Nav, 64)
 					if err == nil {
@@ -476,10 +492,10 @@ func main() {
 
 			// Append up to 6 Indian MFs to the dropdown results
 			limit := len(mfData)
-			if limit > 6 { 
-				limit = 6 
+			if limit > 6 {
+				limit = 6
 			}
-			
+
 			for i := 0; i < limit; i++ {
 				searchData.Quotes = append(searchData.Quotes, struct {
 					Symbol    string `json:"symbol"`
@@ -548,7 +564,7 @@ func main() {
 		var chatReq struct {
 			Message string `json:"message"`
 		}
-		
+
 		// If there is a body, try to bind it. It's okay if it's empty (for legacy support or initial open)
 		if c.Request.ContentLength > 0 {
 			if err := c.ShouldBindJSON(&chatReq); err != nil {
@@ -585,7 +601,7 @@ func main() {
 		if len(symbols) > 0 {
 			newsHeadlines = fetchNewsForAssets(symbols)
 		}
-		
+
 		portfolioStr := "Your portfolio is currently empty."
 		if len(portfolioDesc) > 0 {
 			portfolioStr = strings.Join(portfolioDesc, "\n")
@@ -658,28 +674,28 @@ func fetchLivePriceExtended(symbol string) (float64, float64, string, error) {
 		req, _ := http.NewRequest("GET", url, nil)
 		client := &http.Client{Timeout: 5 * time.Second}
 		resp, err := client.Do(req)
-		
-		if err != nil { 
-			return 0, 0, "", err 
+
+		if err != nil {
+			return 0, 0, "", err
 		}
 		defer resp.Body.Close()
 
 		var data MFAPIDetailResult
-		if err := json.NewDecoder(resp.Body).Decode(&data); err != nil { 
-			return 0, 0, "", err 
+		if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+			return 0, 0, "", err
 		}
-		if len(data.Data) < 1 { 
-			return 0, 0, "", fmt.Errorf("no amfi data found") 
+		if len(data.Data) < 1 {
+			return 0, 0, "", fmt.Errorf("no amfi data found")
 		}
 
 		currentPrice, _ := strconv.ParseFloat(data.Data[0].Nav, 64)
 		prevClose := currentPrice
-		
+
 		// If there is data for yesterday, use it for the daily change calculation
 		if len(data.Data) > 1 {
 			prevClose, _ = strconv.ParseFloat(data.Data[1].Nav, 64)
 		}
-		
+
 		// AMFI prices are strictly in INR
 		return currentPrice, prevClose, "INR", nil
 	}
@@ -719,15 +735,15 @@ func fetchNewsForAssets(symbols []string) string {
 	if len(symbols) > 3 {
 		symbols = symbols[:3]
 	}
-	
+
 	query := strings.Join(symbols, ",")
 	urlStr := fmt.Sprintf("https://query2.finance.yahoo.com/v1/finance/search?q=%s&quotesCount=0&newsCount=3", url.QueryEscape(query))
-	
+
 	req, _ := http.NewRequest("GET", urlStr, nil)
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
-	
+
 	if err != nil || resp.StatusCode != 200 {
 		return "Could not fetch news."
 	}
@@ -755,7 +771,7 @@ func callGeminiAPI(prompt string) (string, error) {
 		return "", fmt.Errorf("GEMINI_API_KEY not set")
 	}
 
-	urlStr := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent?key=%s", apiKey)
+	urlStr := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=%s", apiKey)
 
 	reqBody := GeminiRequest{
 		Contents: []GeminiContent{
@@ -766,12 +782,12 @@ func callGeminiAPI(prompt string) (string, error) {
 			},
 		},
 	}
-	
+
 	jsonData, _ := json.Marshal(reqBody)
-	
+
 	req, _ := http.NewRequest("POST", urlStr, bytes.NewBuffer(jsonData))
 	req.Header.Set("Content-Type", "application/json")
-	
+
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
