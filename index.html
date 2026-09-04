@@ -23,6 +23,7 @@
         let currentUserId = null;
         let currentUsername = null;
         let exchangeRates = { USD: 1, INR: 83, SGD: 1.35 };
+        let globalTypeSummaries = {};
         let selectedCurrency = "INR";
         let currentChart = null;
         let currentAssetSymbol = null;
@@ -625,9 +626,10 @@
                 console.error("AI Error:", err);
                 document.getElementById(typingId).remove();
                 const errorHtml = `
-                    <div class="flex justify-start mb-4">
-                        <div class="bg-red-50 text-red-600 px-4 py-2.5 rounded-2xl rounded-tl-sm shadow-sm text-sm border border-red-100">
-                            Sorry, could not generate a response.
+                    <div class="flex flex-col items-start mb-4">
+                        <img src="AI_icon.webp" alt="AI" class="w-8 h-8 rounded-full shadow-sm mb-1 ml-1 object-cover" />
+                        <div class="bg-white/80 backdrop-blur-md border border-white/60 text-slate-800 px-4 py-3 rounded-2xl rounded-tl-sm shadow-sm max-w-[90%] text-sm ai-content">
+                            Sorry, I could not generate a response at this time. Please try again.
                         </div>
                     </div>
                 `;
@@ -745,11 +747,13 @@
                 typeSummaries[asset.type].count++;
                 typeSummaries[asset.type].assets.push(asset);
             });
+            globalTypeSummaries = typeSummaries;
 
             Object.values(typeSummaries).sort((a, b) => b.totalCurr - a.totalCurr).forEach(summary => {
                 const gainPct = summary.totalInv === 0 ? 0 : (summary.totalGain / summary.totalInv) * 100;
                 const row = document.createElement('tr');
                 row.className = 'hover:bg-slate-50 transition-colors duration-150 cursor-pointer';
+                row.onclick = () => showTypeDetails(summary.type);
                 row.innerHTML = `
                     <td class="px-4 md:px-6 py-4 whitespace-nowrap"><div class="text-sm font-bold text-slate-800">${summary.type}s</div></td>
                     <td class="px-4 md:px-6 py-4 whitespace-nowrap text-right text-sm font-medium text-slate-600">${summary.count}</td>
@@ -949,6 +953,186 @@
             } catch (error) {
                 console.error("Chart error:", error);
                 document.getElementById('chart-loading').innerText = "Chart unavailable";
+            }
+        }
+
+        let currentType = null;
+
+        function showTypeDetails(type) {
+            currentType = type;
+            const summary = globalTypeSummaries[type];
+            if (!summary) return;
+
+            document.getElementById('type-details-name').innerText = type + 's';
+
+            document.getElementById('type-details-content').innerHTML = `
+                <div class="space-y-4">
+                    <div class="bg-slate-50 border border-slate-100 rounded-xl shadow-inner p-2 pb-4">
+                        <div class="flex justify-center gap-2 mb-3 mt-1">
+                            <button onclick="changeTypeChartRange('1wk')" class="type-timeframe-btn text-xs px-3 py-1 rounded-md bg-white border border-slate-200 text-slate-500 hover:bg-slate-100 transition font-medium">1W</button>
+                            <button onclick="changeTypeChartRange('1mo')" class="type-timeframe-btn text-xs px-3 py-1 rounded-md bg-white border border-slate-200 text-slate-500 hover:bg-slate-100 transition font-medium">1M</button>
+                            <button onclick="changeTypeChartRange('3mo')" class="type-timeframe-btn text-xs px-3 py-1 rounded-md bg-violet-600 text-white shadow-md shadow-violet-200 transition font-bold border border-violet-600">3M</button>
+                            <button onclick="changeTypeChartRange('1y')" class="type-timeframe-btn text-xs px-3 py-1 rounded-md bg-white border border-slate-200 text-slate-500 hover:bg-slate-100 transition font-medium">1Y</button>
+                            <button onclick="changeTypeChartRange('max')" class="type-timeframe-btn text-xs px-3 py-1 rounded-md bg-white border border-slate-200 text-slate-500 hover:bg-slate-100 transition font-medium">ALL</button>
+                        </div>
+                        <div class="w-full h-40 relative flex items-center justify-center">
+                            <span id="type-chart-loading" class="text-slate-500 text-sm animate-pulse font-medium">Loading chart...</span>
+                            <canvas id="typeChart" class="hidden absolute inset-0 w-full h-full"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div class="bg-slate-50 p-4 rounded-xl border border-slate-100"><p class="text-xs font-semibold text-slate-500 uppercase">Current Value</p><p class="text-xl font-bold text-slate-800">${formatMoney(summary.totalCurr, selectedCurrency)}</p></div>
+                        <div class="bg-slate-50 p-4 rounded-xl border border-slate-100"><p class="text-xs font-semibold text-slate-500 uppercase">Invested Value</p><p class="text-xl font-bold text-slate-800">${formatMoney(summary.totalInv, selectedCurrency)}</p></div>
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('type-details-modal-backdrop').classList.remove('invisible', 'opacity-0');
+            document.getElementById('type-details-modal').classList.remove('-translate-y-10', 'scale-95');
+            document.getElementById('type-details-modal').classList.add('translate-y-0', 'scale-100');
+
+            fetchAndRenderCombinedChart(summary.assets, '3mo');
+        }
+        window.showTypeDetails = showTypeDetails;
+
+        function hideTypeDetailsModal() {
+            document.getElementById('type-details-modal').classList.add('-translate-y-10', 'scale-95');
+            document.getElementById('type-details-modal').classList.remove('translate-y-0', 'scale-100');
+            document.getElementById('type-details-modal-backdrop').classList.add('opacity-0');
+
+            if (currentChart) {
+                currentChart.destroy();
+                currentChart = null;
+            }
+            setTimeout(() => { document.getElementById('type-details-modal-backdrop').classList.add('invisible'); }, 250);
+        }
+        window.hideTypeDetailsModal = hideTypeDetailsModal;
+
+        window.changeTypeChartRange = function (range) {
+            const buttons = document.querySelectorAll('.type-timeframe-btn');
+            const ranges = ['1wk', '1mo', '3mo', '1y', 'max'];
+
+            buttons.forEach((btn, index) => {
+                if (ranges[index] === range) {
+                    btn.className = "type-timeframe-btn text-xs px-3 py-1 rounded-md bg-violet-600 text-white shadow-md shadow-violet-200 transition font-bold border border-violet-600";
+                } else {
+                    btn.className = "type-timeframe-btn text-xs px-3 py-1 rounded-md bg-white border border-slate-200 text-slate-500 hover:bg-slate-100 transition font-medium";
+                }
+            });
+
+            if (currentChart) {
+                currentChart.destroy();
+                currentChart = null;
+            }
+
+            document.getElementById('typeChart').classList.add('hidden');
+            document.getElementById('type-chart-loading').classList.remove('hidden');
+            document.getElementById('type-chart-loading').innerText = "Loading chart...";
+
+            const summary = globalTypeSummaries[currentType];
+            if (summary) fetchAndRenderCombinedChart(summary.assets, range);
+        };
+
+        async function fetchAndRenderCombinedChart(assets, range) {
+            try {
+                const promises = assets.map(a => fetch(`${BACKEND_URL}/api/history/${a.name}?range=${range}`).then(r => r.json()).then(d => ({ asset: a, data: d })));
+                const results = await Promise.all(promises);
+
+                const timestampsSet = new Set();
+                const assetData = [];
+
+                results.forEach(res => {
+                    if (!res.data.chart || !res.data.chart.result) return;
+                    const r = res.data.chart.result[0];
+                    assetData.push({
+                        asset: res.asset,
+                        timestamps: r.timestamp || [],
+                        prices: r.indicators.quote[0].close || []
+                    });
+                    if (r.timestamp) r.timestamp.forEach(ts => timestampsSet.add(ts));
+                });
+
+                if (assetData.length === 0) throw new Error("No chart data");
+
+                const sortedTimestamps = Array.from(timestampsSet).sort((a, b) => a - b);
+                const lastPrices = {};
+                
+                const combinedValues = sortedTimestamps.map(ts => {
+                    let totalValue = 0;
+                    assetData.forEach((ad, i) => {
+                        const idx = ad.timestamps.indexOf(ts);
+                        if (idx !== -1 && ad.prices[idx] !== null) {
+                            lastPrices[i] = ad.prices[idx];
+                        }
+                        const price = lastPrices[i] || 0;
+                        const assetCcy = ad.asset.currency || "USD";
+                        const rateToUSD = 1 / (exchangeRates[assetCcy] || 1);
+                        const rateToSelected = exchangeRates[selectedCurrency];
+                        const convertedPrice = price * rateToUSD * rateToSelected;
+                        totalValue += convertedPrice * ad.asset.quantity;
+                    });
+                    return totalValue;
+                });
+
+                const labels = sortedTimestamps.map(ts => {
+                    const d = new Date(ts * 1000);
+                    if (range === 'max' || range === '1y') {
+                        return d.toLocaleDateString(undefined, { month: 'short', year: '2-digit' });
+                    } else if (range === '1wk') {
+                        return d.toLocaleDateString(undefined, { weekday: 'short' });
+                    } else {
+                        return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                    }
+                });
+
+                document.getElementById('type-chart-loading').classList.add('hidden');
+                const canvas = document.getElementById('typeChart');
+                canvas.classList.remove('hidden');
+                const ctx = canvas.getContext('2d');
+
+                let startValue = combinedValues[0] || 0;
+                let endValue = combinedValues[combinedValues.length - 1] || 0;
+
+                const isUp = endValue >= startValue;
+                const lineColor = isUp ? '#22c55e' : '#ef4444';
+                const bgColor = isUp ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)';
+
+                currentChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            data: combinedValues,
+                            borderColor: lineColor,
+                            backgroundColor: bgColor,
+                            borderWidth: 2,
+                            pointRadius: 0,
+                            pointHoverRadius: 5,
+                            fill: true,
+                            tension: 0.1,
+                            spanGaps: true
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            x: { display: false },
+                            y: {
+                                display: true,
+                                position: 'right',
+                                grid: { color: 'rgba(75, 85, 99, 0.2)', drawBorder: false },
+                                ticks: { color: '#9ca3af', font: { size: 10 }, maxTicksLimit: 5 }
+                            }
+                        },
+                        interaction: { mode: 'index', intersect: false }
+                    }
+                });
+            } catch (error) {
+                console.error("Combined chart error:", error);
+                document.getElementById('type-chart-loading').innerText = "Chart unavailable";
             }
         }
     </script>
@@ -1236,6 +1420,21 @@
                     class="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1.5 rounded-lg transition-colors">✕</button>
             </div>
             <div id="asset-details-content" class="modal-content-body p-6 overflow-y-auto"></div>
+        </div>
+    </div>
+
+    <!-- Type Details Modal -->
+    <div id="type-details-modal-backdrop"
+        class="modal-backdrop fixed inset-0 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm invisible opacity-0 z-40">
+        <div id="type-details-modal"
+            class="modal-content bg-white text-slate-800 rounded-2xl shadow-2xl w-11/12 md:max-w-md transform -translate-y-10 scale-95 flex flex-col border border-slate-100">
+            <div
+                class="flex items-center justify-between p-5 border-b border-slate-100 flex-shrink-0 bg-slate-50/50 rounded-t-2xl">
+                <h3 id="type-details-name" class="text-xl font-bold text-slate-900">Category Details</h3><button
+                    onclick="hideTypeDetailsModal()"
+                    class="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1.5 rounded-lg transition-colors">✕</button>
+            </div>
+            <div id="type-details-content" class="modal-content-body p-6 overflow-y-auto"></div>
         </div>
     </div>
 
