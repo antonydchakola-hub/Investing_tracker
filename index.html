@@ -585,8 +585,9 @@
             // Show typing indicator
             const typingId = 'typing-' + Date.now();
             const typingHtml = `
-                <div id="${typingId}" class="flex justify-start mb-4">
-                    <div class="bg-slate-100 text-slate-500 px-4 py-3 rounded-2xl rounded-tl-sm shadow-sm max-w-[85%] text-sm flex items-center gap-1">
+                <div id="${typingId}" class="flex flex-col items-start mb-4">
+                    <img src="AI_icon.webp" alt="AI" class="w-8 h-8 rounded-full shadow-sm mb-1 ml-1 object-cover" />
+                    <div class="bg-white/60 backdrop-blur-md text-slate-500 px-4 py-3 rounded-2xl rounded-tl-sm shadow-sm max-w-[85%] text-sm flex items-center gap-1 border border-white/50">
                         <div class="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce"></div>
                         <div class="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
                         <div class="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
@@ -612,8 +613,9 @@
 
                 // Append AI message
                 const aiMsgHtml = `
-                    <div class="flex justify-start mb-4">
-                        <div class="bg-white border border-slate-100 text-slate-800 px-4 py-3 rounded-2xl rounded-tl-sm shadow-sm max-w-[90%] text-sm ai-content">
+                    <div class="flex flex-col items-start mb-4">
+                        <img src="AI_icon.webp" alt="AI" class="w-8 h-8 rounded-full shadow-sm mb-1 ml-1 object-cover" />
+                        <div class="bg-white/80 backdrop-blur-md border border-white/60 text-slate-800 px-4 py-3 rounded-2xl rounded-tl-sm shadow-sm max-w-[90%] text-sm ai-content">
                             ${data.insights}
                         </div>
                     </div>
@@ -1294,7 +1296,8 @@
             <!-- Chat History -->
             <div id="chat-history" class="flex-1 p-4 overflow-y-auto space-y-4">
                 <!-- Welcome Message -->
-                <div class="flex justify-start mb-4">
+                <div class="flex flex-col items-start mb-4">
+                    <img src="AI_icon.webp" alt="AI" class="w-8 h-8 rounded-full shadow-sm mb-1 ml-1 object-cover" />
                     <div class="bg-white/80 backdrop-blur-md border border-white/60 text-slate-800 px-4 py-3 rounded-2xl rounded-tl-sm shadow-sm max-w-[90%] text-sm ai-content">
                         Hi there! I'm your AI financial assistant. How can I help you with your portfolio today?
                     </div>
