@@ -545,38 +545,111 @@
             refreshPricesBtn.disabled = false;
         }
 
-        async function askAI() {
-            const btn = document.getElementById('ask-ai-btn');
-            const panel = document.getElementById('ai-insights-panel');
-            const content = document.getElementById('ai-insights-content');
+        function openChatModal() {
+            document.getElementById('chat-modal-backdrop').classList.remove('invisible', 'opacity-0');
+            document.getElementById('chat-modal').classList.remove('translate-y-10', 'opacity-0');
+            document.getElementById('chat-modal').classList.add('translate-y-0', 'opacity-100');
+            document.getElementById('chat-input').focus();
+        }
+        window.openChatModal = openChatModal;
+
+        function closeChatModal() {
+            document.getElementById('chat-modal').classList.remove('translate-y-0', 'opacity-100');
+            document.getElementById('chat-modal').classList.add('translate-y-10', 'opacity-0');
+            document.getElementById('chat-modal-backdrop').classList.add('opacity-0');
+            setTimeout(() => {
+                document.getElementById('chat-modal-backdrop').classList.add('invisible');
+            }, 300);
+        }
+        window.closeChatModal = closeChatModal;
+
+        async function sendChatMessage() {
+            const inputEl = document.getElementById('chat-input');
+            const message = inputEl.value.trim();
+            if (!message) return;
+
+            const chatHistory = document.getElementById('chat-history');
             
-            // UI Loading state
-            panel.classList.remove('hidden');
-            content.innerHTML = '<div class="flex items-center gap-3 text-fuchsia-600 font-medium"><svg class="animate-spin w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Analyzing portfolio and latest news...</div>';
-            
-            const originalBtnHtml = btn.innerHTML;
-            btn.innerHTML = 'Thinking...';
-            btn.disabled = true;
+            // Append user message
+            const userMsgHtml = `
+                <div class="flex justify-end mb-4">
+                    <div class="bg-violet-600 text-white px-4 py-2.5 rounded-2xl rounded-tr-sm shadow-sm max-w-[85%] text-sm">
+                        ${escapeHtml(message)}
+                    </div>
+                </div>
+            `;
+            chatHistory.insertAdjacentHTML('beforeend', userMsgHtml);
+            inputEl.value = '';
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+
+            // Show typing indicator
+            const typingId = 'typing-' + Date.now();
+            const typingHtml = `
+                <div id="${typingId}" class="flex justify-start mb-4">
+                    <div class="bg-slate-100 text-slate-500 px-4 py-3 rounded-2xl rounded-tl-sm shadow-sm max-w-[85%] text-sm flex items-center gap-1">
+                        <div class="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce"></div>
+                        <div class="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style="animation-delay: 0.1s"></div>
+                        <div class="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce" style="animation-delay: 0.2s"></div>
+                    </div>
+                </div>
+            `;
+            chatHistory.insertAdjacentHTML('beforeend', typingHtml);
+            chatHistory.scrollTop = chatHistory.scrollHeight;
 
             try {
                 const res = await fetch(`${BACKEND_URL}/api/insights`, {
                     method: 'POST',
-                    headers: { 'X-User-ID': currentUserId }
+                    headers: { 'X-User-ID': currentUserId, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message })
                 });
                 
                 if (!res.ok) throw new Error("Failed to get insights");
                 
                 const data = await res.json();
-                content.innerHTML = `<div class="ai-content">${data.insights}</div>`;
+                
+                // Remove typing indicator
+                document.getElementById(typingId).remove();
+
+                // Append AI message
+                const aiMsgHtml = `
+                    <div class="flex justify-start mb-4">
+                        <div class="bg-white border border-slate-100 text-slate-800 px-4 py-3 rounded-2xl rounded-tl-sm shadow-sm max-w-[90%] text-sm ai-content">
+                            ${data.insights}
+                        </div>
+                    </div>
+                `;
+                chatHistory.insertAdjacentHTML('beforeend', aiMsgHtml);
             } catch (err) {
                 console.error("AI Error:", err);
-                content.innerHTML = `<div class="text-red-500 font-medium">Sorry, could not generate insights at this time.</div>`;
-            } finally {
-                btn.innerHTML = originalBtnHtml;
-                btn.disabled = false;
+                document.getElementById(typingId).remove();
+                const errorHtml = `
+                    <div class="flex justify-start mb-4">
+                        <div class="bg-red-50 text-red-600 px-4 py-2.5 rounded-2xl rounded-tl-sm shadow-sm text-sm border border-red-100">
+                            Sorry, could not generate a response.
+                        </div>
+                    </div>
+                `;
+                chatHistory.insertAdjacentHTML('beforeend', errorHtml);
+            }
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+        }
+        window.sendChatMessage = sendChatMessage;
+
+        function handleChatKeyPress(e) {
+            if (e.key === 'Enter') {
+                sendChatMessage();
             }
         }
-        window.askAI = askAI;
+        window.handleChatKeyPress = handleChatKeyPress;
+
+        function escapeHtml(unsafe) {
+            return unsafe
+                 .replace(/&/g, "&amp;")
+                 .replace(/</g, "&lt;")
+                 .replace(/>/g, "&gt;")
+                 .replace(/"/g, "&quot;")
+                 .replace(/'/g, "&#039;");
+        }
 
         function formatMoney(amount, currency) {
             const locale = currency === 'INR' ? 'en-IN' : 'en-US';
@@ -968,7 +1041,7 @@
                 </select>
                 <button id="refresh-prices-btn"
                     class="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white px-3 py-2 rounded-lg text-sm font-semibold transition-all shadow-md shadow-emerald-200">Refresh</button>
-                <button id="ask-ai-btn" onclick="askAI()"
+                <button id="ask-ai-btn" onclick="openChatModal()"
                     class="bg-gradient-to-r from-violet-500 via-fuchsia-500 to-orange-500 animate-gradient-x bg-[length:200%_auto] hover:opacity-90 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-all shadow-md shadow-fuchsia-200 flex items-center justify-center">
                     Ask AI
                 </button>
@@ -995,17 +1068,7 @@
             </div>
         </header>
 
-        <!-- AI Insights Panel -->
-        <div id="ai-insights-panel" class="hidden mb-8 relative rounded-2xl p-[2px] bg-gradient-to-r from-fuchsia-500 via-purple-500 to-violet-500 animate-gradient-x shadow-lg shadow-purple-300">
-            <div class="bg-white rounded-xl p-6 h-full w-full">
-                <div class="flex items-center gap-2 mb-4">
-                    <h2 class="text-xl font-bold text-slate-800">AI Insights</h2>
-                </div>
-                <div id="ai-insights-content" class="text-slate-600">
-                    <!-- AI content goes here -->
-                </div>
-            </div>
-        </div>
+        <!-- AI Insights Panel Removed -->
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <div
@@ -1211,6 +1274,46 @@
                     </button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Chat AI Modal -->
+    <div id="chat-modal-backdrop" onclick="if(event.target === this) closeChatModal()"
+        class="fixed inset-0 flex items-center justify-center sm:justify-end sm:items-end bg-slate-900/40 backdrop-blur-sm invisible opacity-0 z-[60] sm:p-6 transition-all duration-300">
+        <div id="chat-modal"
+            class="bg-slate-50 flex flex-col w-full h-full sm:h-[600px] sm:w-[400px] sm:rounded-3xl shadow-2xl overflow-hidden transform translate-y-10 opacity-0 transition-all duration-300 border border-slate-200">
+            <!-- Header -->
+            <div class="flex items-center justify-between p-4 bg-white/80 backdrop-blur-md border-b border-slate-100 flex-shrink-0 z-10 sticky top-0">
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-full bg-gradient-to-r from-violet-500 to-fuchsia-500 flex items-center justify-center text-white shadow-sm">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    </div>
+                    <h3 class="text-base font-bold text-slate-800">AI Assistant</h3>
+                </div>
+                <button onclick="closeChatModal()" class="text-slate-400 hover:text-slate-600 hover:bg-slate-100 p-1.5 rounded-full transition-colors focus:outline-none">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <!-- Chat History -->
+            <div id="chat-history" class="flex-1 p-4 overflow-y-auto space-y-4">
+                <!-- Welcome Message -->
+                <div class="flex justify-start mb-4">
+                    <div class="bg-white border border-slate-100 text-slate-800 px-4 py-3 rounded-2xl rounded-tl-sm shadow-sm max-w-[90%] text-sm ai-content">
+                        Hi there! I'm your AI financial assistant. How can I help you with your portfolio today?
+                    </div>
+                </div>
+            </div>
+            <!-- Input Area -->
+            <div class="p-3 bg-white border-t border-slate-100 flex-shrink-0">
+                <div class="relative flex items-center">
+                    <input type="text" id="chat-input" onkeypress="handleChatKeyPress(event)" placeholder="Ask anything..." autocomplete="off"
+                        class="w-full pl-4 pr-12 py-3 bg-slate-50 border border-slate-200 rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/50 transition-all text-slate-800 placeholder-slate-400">
+                    <button onclick="sendChatMessage()" class="absolute right-1.5 w-8 h-8 flex items-center justify-center bg-violet-600 hover:bg-violet-700 text-white rounded-full transition-colors shadow-sm focus:outline-none">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7"></path></svg>
+                    </button>
+                </div>
+                <div class="text-[10px] text-center text-slate-400 mt-2 font-medium">AI can make mistakes. Consider verifying important information.</div>
+            </div>
         </div>
     </div>
 </body>

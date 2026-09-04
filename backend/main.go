@@ -536,7 +536,7 @@ func main() {
 		c.JSON(http.StatusOK, gin.H{"USD": 1.0, "INR": inr, "SGD": sgd})
 	})
 
-	// POST /api/insights - Generate AI insights for user's portfolio
+	// POST /api/insights - Generate AI insights or answer chat queries for user's portfolio
 	r.POST("/api/insights", func(c *gin.Context) {
 		userIDStr := c.GetHeader("X-User-ID")
 		if userIDStr == "" {
@@ -544,6 +544,18 @@ func main() {
 			return
 		}
 		userID, _ := strconv.Atoi(userIDStr)
+
+		var chatReq struct {
+			Message string `json:"message"`
+		}
+		
+		// If there is a body, try to bind it. It's okay if it's empty (for legacy support or initial open)
+		if c.Request.ContentLength > 0 {
+			if err := c.ShouldBindJSON(&chatReq); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+				return
+			}
+		}
 
 		// 1. Fetch Top Assets
 		query := `SELECT name, quantity, current_price, currency FROM assets WHERE user_id=$1 ORDER BY (current_price * quantity) DESC LIMIT 5`
@@ -568,22 +580,44 @@ func main() {
 			}
 		}
 
-		if len(portfolioDesc) == 0 {
-			c.JSON(http.StatusOK, gin.H{"insights": "Your portfolio is currently empty. Add some assets to get AI insights!"})
-			return
+		// 2. Fetch News (even if portfolio is empty, they might ask a general question)
+		newsHeadlines := ""
+		if len(symbols) > 0 {
+			newsHeadlines = fetchNewsForAssets(symbols)
+		}
+		
+		portfolioStr := "Your portfolio is currently empty."
+		if len(portfolioDesc) > 0 {
+			portfolioStr = strings.Join(portfolioDesc, "\n")
 		}
 
-		// 2. Fetch News
-		newsHeadlines := fetchNewsForAssets(symbols)
-
 		// 3. Construct Prompt
-		prompt := fmt.Sprintf(`You are an expert financial advisor. The user holds the following top assets:
+		var prompt string
+		if chatReq.Message != "" {
+			prompt = fmt.Sprintf(`You are an expert financial advisor. The user has the following top assets:
+%s
+
+Today's recent news headlines for these assets (if any):
+%s
+
+The user has asked the following question/message: "%s"
+
+Provide a helpful, professional, and accurate answer based on the user's question and their portfolio context. 
+Format the response nicely using HTML (use <ul><li>, <strong>, <p>, <br> etc.). Do NOT use markdown. Keep it visually appealing and tailored to their prompt.`, portfolioStr, newsHeadlines, chatReq.Message)
+		} else {
+			// Fallback to original insights prompt if no specific message is provided
+			if len(portfolioDesc) == 0 {
+				c.JSON(http.StatusOK, gin.H{"insights": "Your portfolio is currently empty. Add some assets to get AI insights!"})
+				return
+			}
+			prompt = fmt.Sprintf(`You are an expert financial advisor. The user holds the following top assets:
 %s
 
 Today's recent news headlines for these assets:
 %s
 
-Based on this information, provide 3 short, actionable pivot strategies or insights for the user. Format the response nicely using HTML (use <ul><li>...</li></ul> or <strong>bold text</strong>). Do NOT use markdown. Keep it concise, professional, and visually appealing.`, strings.Join(portfolioDesc, "\n"), newsHeadlines)
+Based on this information, provide 3 short, actionable pivot strategies or insights for the user. Format the response nicely using HTML (use <ul><li>...</li></ul> or <strong>bold text</strong>). Do NOT use markdown. Keep it concise, professional, and visually appealing.`, portfolioStr, newsHeadlines)
+		}
 
 		// 4. Call Gemini
 		insights, err := callGeminiAPI(prompt)
