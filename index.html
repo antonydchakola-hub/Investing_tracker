@@ -364,6 +364,34 @@
             }
         }
 
+        async function handleDemoLogin(e) {
+            e.preventDefault();
+            authErrorEl.classList.add('hidden');
+            const btn = document.getElementById('demo-login-btn');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = `<svg class="animate-spin -ml-1 mr-2 h-5 w-5 text-slate-700 inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Creating Demo...`;
+            btn.disabled = true;
+
+            try {
+                const res = await fetch(`${BACKEND_URL}/api/demo-login`, {
+                    method: 'POST'
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error);
+
+                currentUserId = data.userId;
+                currentUsername = data.username;
+                sessionStorage.setItem('userId', currentUserId);
+                sessionStorage.setItem('username', currentUsername);
+                fetchRatesAndInit();
+            } catch (err) {
+                authErrorEl.textContent = err.message;
+                authErrorEl.classList.remove('hidden');
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        }
+
         async function handleSignup(e) {
             e.preventDefault();
             const u = document.getElementById('signup-username').value;
@@ -1174,8 +1202,13 @@
                         placeholder="password">
                 </div>
                 <button type="submit"
-                    class="w-full bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white font-bold py-3 px-5 rounded-lg shadow-lg shadow-violet-200 transition-all duration-200 mb-5">Sign
+                    class="w-full bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white font-bold py-3 px-5 rounded-lg shadow-lg shadow-violet-200 transition-all duration-200 mb-3">Sign
                     In</button>
+
+                <button type="button" id="demo-login-btn" onclick="handleDemoLogin(event)"
+                    class="w-full bg-white text-slate-700 hover:bg-slate-50 border-2 border-slate-200 font-bold py-3 px-5 rounded-lg transition-all duration-200 mb-5 flex items-center justify-center gap-2 shadow-sm">
+                    Test in Demo account
+                </button>
 
                 <div class="text-center text-sm text-slate-500">
                     Don't have an account?
