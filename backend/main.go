@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/url"
@@ -213,6 +214,45 @@ func main() {
 		}
 
 		c.JSON(http.StatusOK, gin.H{"message": "Login successful", "userId": dbID, "username": u.Username})
+	})
+
+	// POST /api/demo-login - Creates an ephemeral demo user and populates with dummy data
+	r.POST("/api/demo-login", func(c *gin.Context) {
+		demoUsername := fmt.Sprintf("demo_%d", time.Now().UnixNano())
+		demoPassword := "demo_password"
+
+		hashedPwd, err := bcrypt.GenerateFromPassword([]byte(demoPassword), bcrypt.DefaultCost)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to setup demo user"})
+			return
+		}
+
+		var newID int
+		err = dbPool.QueryRow(context.Background(),
+			"INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING id",
+			demoUsername, string(hashedPwd)).Scan(&newID)
+
+		if err != nil {
+			log.Println("DB Error during demo signup:", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Demo setup failed: " + err.Error()})
+			return
+		}
+
+		insertQ := `INSERT INTO assets (user_id, name, nickname, asset_type, quantity, avg_price, current_price, previous_close, currency) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`
+		
+		// Green assets
+		dbPool.Exec(context.Background(), insertQ, newID, "AAPL", "Apple", "Stock", 50.0, 150.0, 220.0, 218.0, "USD")
+		dbPool.Exec(context.Background(), insertQ, newID, "MSFT", "Microsoft", "Stock", 20.0, 300.0, 410.0, 405.0, "USD")
+		dbPool.Exec(context.Background(), insertQ, newID, "BTC-USD", "Bitcoin", "Crypto", 0.5, 35000.0, 60000.0, 59500.0, "USD")
+		dbPool.Exec(context.Background(), insertQ, newID, "VOO", "S&P 500", "Mutual Fund", 100.0, 380.0, 490.0, 485.0, "USD")
+		dbPool.Exec(context.Background(), insertQ, newID, "GOOGL", "Google", "Stock", 40.0, 160.0, 165.0, 163.0, "USD")
+
+		// Red assets
+		dbPool.Exec(context.Background(), insertQ, newID, "TSLA", "Tesla", "Stock", 30.0, 250.0, 180.0, 182.0, "USD")
+		dbPool.Exec(context.Background(), insertQ, newID, "PFE", "Pfizer", "Stock", 100.0, 45.0, 28.0, 28.5, "USD")
+		dbPool.Exec(context.Background(), insertQ, newID, "ETH-USD", "Ethereum", "Crypto", 5.0, 3200.0, 2900.0, 2950.0, "USD")
+
+		c.JSON(http.StatusOK, gin.H{"message": "Demo login successful", "userId": newID, "username": demoUsername})
 	})
 
 	// --- ASSET ROUTES (Protected by X-User-ID) ---
@@ -639,7 +679,7 @@ Based on this information, provide 3 short, actionable pivot strategies or insig
 		insights, err := callGeminiAPI(prompt)
 		if err != nil {
 			log.Println("Gemini Error:", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate insights"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate insights: " + err.Error()})
 			return
 		}
 
@@ -657,6 +697,35 @@ Based on this information, provide 3 short, actionable pivot strategies or insig
 
 			// 2. Ping Supabase to keep the database awake
 			dbPool.Exec(context.Background(), "SELECT 1")
+
+			// 3. Clean up old demo accounts (older than 24 hours)
+			cutoffNano := time.Now().Add(-24 * time.Hour).UnixNano()
+			rows, err := dbPool.Query(context.Background(), "SELECT id, username FROM users WHERE username LIKE 'demo_%'")
+			if err == nil {
+				var idsToDelete []int
+				for rows.Next() {
+					var id int
+					var username string
+					rows.Scan(&id, &username)
+					
+					tsStr := strings.TrimPrefix(username, "demo_")
+					ts, err := strconv.ParseInt(tsStr, 10, 64)
+					if err == nil && ts < cutoffNano {
+						idsToDelete = append(idsToDelete, id)
+					}
+				}
+				rows.Close()
+				
+				if len(idsToDelete) > 0 {
+					dbPool.Exec(context.Background(), "DELETE FROM assets WHERE user_id = ANY($1)", idsToDelete)
+					_, err = dbPool.Exec(context.Background(), "DELETE FROM users WHERE id = ANY($1)", idsToDelete)
+					if err != nil {
+						log.Println("Error deleting old demo users:", err)
+					} else {
+						log.Printf("Cleaned up %d old demo accounts\n", len(idsToDelete))
+					}
+				}
+			}
 		}
 	}()
 
@@ -771,7 +840,7 @@ func callGeminiAPI(prompt string) (string, error) {
 		return "", fmt.Errorf("GEMINI_API_KEY not set")
 	}
 
-	urlStr := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=%s", apiKey)
+	urlStr := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=%s", apiKey)
 
 	reqBody := GeminiRequest{
 		Contents: []GeminiContent{
@@ -785,19 +854,39 @@ func callGeminiAPI(prompt string) (string, error) {
 
 	jsonData, _ := json.Marshal(reqBody)
 
-	req, _ := http.NewRequest("POST", urlStr, bytes.NewBuffer(jsonData))
-	req.Header.Set("Content-Type", "application/json")
-
 	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
+
+	var resp *http.Response
+	var err error
+	maxRetries := 3
+
+	for i := 0; i < maxRetries; i++ {
+		req, _ := http.NewRequest("POST", urlStr, bytes.NewBuffer(jsonData))
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err = client.Do(req)
+		if err != nil {
+			return "", err
+		}
+
+		if resp.StatusCode == 503 {
+			resp.Body.Close()
+			if i < maxRetries-1 {
+				time.Sleep(2 * time.Second)
+				continue
+			}
+			return "", fmt.Errorf("gemini api returned status 503 repeatedly")
+		}
+
+		if resp.StatusCode != 200 {
+			bodyBytes, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return "", fmt.Errorf("gemini api returned status %d: %s", resp.StatusCode, string(bodyBytes))
+		}
+
+		break // Success!
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("gemini api error: status %d", resp.StatusCode)
-	}
 
 	var result GeminiResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
